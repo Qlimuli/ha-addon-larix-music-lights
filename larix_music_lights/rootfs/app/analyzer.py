@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Larix Music Reactive Lights - Audio analyzer & light controller (v1.3.3)
+Larix Music Reactive Lights - Audio analyzer & light controller (v1.4.0)
 """
 
 import os
@@ -30,11 +30,11 @@ except Exception as _e:
 
 ENABLED = os.getenv("ADDON_ENABLED", "true").lower() == "true"
 ACTIVE_PROFILE = os.getenv("ADDON_ACTIVE_PROFILE", "").strip()
-GLOBAL_MODE = os.getenv("ADDON_MODE", "spectrum")
-GLOBAL_SENSITIVITY = float(os.getenv("ADDON_SENSITIVITY", "0.7"))
+GLOBAL_MODE = os.getenv("ADDON_MODE", "auto")
+GLOBAL_SENSITIVITY = float(os.getenv("ADDON_SENSITIVITY", "1.0"))
 UPDATE_MS = int(os.getenv("ADDON_UPDATE_MS", "80"))
 GLOBAL_TRANSITION = float(os.getenv("ADDON_TRANSITION", "0.15"))
-GLOBAL_MIN_BRIGHT = int(os.getenv("ADDON_MIN_BRIGHT", "10"))
+GLOBAL_MIN_BRIGHT = int(os.getenv("ADDON_MIN_BRIGHT", "20"))
 GLOBAL_MAX_BRIGHT = int(os.getenv("ADDON_MAX_BRIGHT", "255"))
 COLOR_MODE = os.getenv("ADDON_COLOR_MODE", "spectrum")
 GLOBAL_BASE_HUE = int(os.getenv("ADDON_BASE_HUE", "0"))
@@ -137,12 +137,7 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 log = logging.getLogger("larix-music")
-log.info(
-    "Config loaded: lights=%s profiles=%d options_keys=%s",
-    LEGACY_LIGHTS,
-    len(PROFILES),
-    list(_OPTIONS.keys()) if _OPTIONS else [],
-)
+log.info("Config loaded: lights=%s profiles=%d", LEGACY_LIGHTS, len(PROFILES))
 
 state: Optional[Any] = None
 
@@ -153,18 +148,9 @@ def load_active_profile() -> Dict[str, Any]:
         if ACTIVE_PROFILE:
             for p in profiles:
                 if isinstance(p, dict) and p.get("name") == ACTIVE_PROFILE:
-                    log.info("Using profile: %s (room=%s)", p.get("name"), p.get("room"))
                     return p
-            log.warning("active_profile '%s' not found - using first profile", ACTIVE_PROFILE)
         p = profiles[0] if isinstance(profiles[0], dict) else {}
-        log.info("Using first profile: %s (room=%s)", p.get("name"), p.get("room"))
         return p
-
-    log.info(
-        "No profiles defined - using legacy light_entities (%d) / area_ids (%d)",
-        len(LEGACY_LIGHTS),
-        len(LEGACY_AREAS),
-    )
     return {
         "name": "legacy",
         "room": "",
@@ -192,10 +178,7 @@ class HomeAssistant:
     def __init__(self):
         self.session = requests.Session()
         self.session.headers.update(
-            {
-                "Authorization": f"Bearer {TOKEN}",
-                "Content-Type": "application/json",
-            }
+            {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}
         )
         self._area_lights_cache: Dict[str, List[str]] = {}
 
@@ -263,7 +246,6 @@ class HomeAssistant:
                     payload["xy_color"] = [round(X / tot, 4), round(Y / tot, 4)]
             except Exception:
                 payload["hs_color"] = [float(hs_color[0]) % 360, float(hs_color[1])]
-
         result = self._request("POST", "/services/light/turn_on", json=payload)
         if result is None:
             self._request(
@@ -298,36 +280,28 @@ class AudioAnalyzer:
     def process(self, pcm: bytes, sensitivity: float) -> Dict[str, float]:
         if len(pcm) < 1024:
             return {"amplitude": 0.0, "bass": 0.0, "mid": 0.0, "high": 0.0, "beat": 0.0}
-
         if len(pcm) % 2:
             pcm = pcm[:-1]
-
         samples = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
         if samples.size == 0:
             return {"amplitude": 0.0, "bass": 0.0, "mid": 0.0, "high": 0.0, "beat": 0.0}
-
         peak = float(np.max(np.abs(samples))) if samples.size else 0.0
         samples /= 32768.0
         window = np.hanning(len(samples))
         samples = samples * window
-
         fft = np.abs(np.fft.rfft(samples))
         freqs = np.fft.rfftfreq(len(samples), 1.0 / SAMPLE_RATE)
-
         bass = self._band_energy(fft, freqs, 20, 150)
         mid = self._band_energy(fft, freqs, 150, 2000)
         high = self._band_energy(fft, freqs, 2000, 8000)
         amplitude = float(np.sqrt(np.mean(samples ** 2)))
-
-        bass = min(1.0, bass * 20.0 * sensitivity)
-        mid = min(1.0, mid * 16.0 * sensitivity)
-        high = min(1.0, high * 12.0 * sensitivity)
-        gain = 12.0 if peak < 2000 else 8.0
+        bass = min(1.0, bass * 10.0 * sensitivity)
+        mid = min(1.0, mid * 9.0 * sensitivity)
+        high = min(1.0, high * 8.0 * sensitivity)
+        gain = 10.0 if peak < 2000 else 6.0
         amplitude = min(1.0, amplitude * gain * sensitivity)
-
         self.bass_hist.append(bass)
         self.energy_hist.append(amplitude)
-
         beat = 0.0
         now = time.time()
         if len(self.bass_hist) >= 5:
@@ -335,14 +309,7 @@ class AudioAnalyzer:
             if bass > avg * (1.0 + self.beat_threshold) and (now - self.last_beat) > 0.25:
                 beat = 1.0
                 self.last_beat = now
-
-        return {
-            "amplitude": amplitude,
-            "bass": bass,
-            "mid": mid,
-            "high": high,
-            "beat": beat,
-        }
+        return {"amplitude": amplitude, "bass": bass, "mid": mid, "high": high, "beat": beat}
 
     @staticmethod
     def _band_energy(fft, freqs, f_low, f_high):
@@ -355,46 +322,26 @@ class AudioAnalyzer:
 def resolve_band_lights(ha: HomeAssistant, profile: Dict[str, Any]) -> Dict[str, List[str]]:
     area_ids = profile.get("area_ids") or []
     area_lights = ha.lights_for_areas(area_ids) if area_ids else []
-
     bass = list(profile.get("bass_lights") or [])
     mid = list(profile.get("mid_lights") or [])
     high = list(profile.get("high_lights") or [])
     full = list(profile.get("full_lights") or [])
-
     if not any([bass, mid, high, full]):
         full = area_lights or list(LEGACY_LIGHTS)
-
     if not full and area_lights:
         full = area_lights
-
-    log.info(
-        "Band lights - bass: %s | mid: %s | high: %s | full: %s",
-        bass or "(none)",
-        mid or "(none)",
-        high or "(none)",
-        full or "(none)",
-    )
-    if not any([bass, mid, high, full]):
-        log.error("NO LIGHTS CONFIGURED - LEGACY_LIGHTS=%s", LEGACY_LIGHTS)
+    log.info("Band lights - full: %s", full or "(none)")
     return {"bass": bass, "mid": mid, "high": high, "full": full}
 
 
 def map_to_lights(
-    ha: HomeAssistant,
-    analyzer: AudioAnalyzer,
-    features: Dict[str, float],
-    bands: Dict[str, List[str]],
-    mode: str,
-    min_b: int,
-    max_b: int,
-    transition: float,
+    ha, analyzer, features, bands, mode, min_b, max_b, transition
 ):
     amp = features["amplitude"]
     bass = features["bass"]
     mid = features["mid"]
     high = features["high"]
     beat = features["beat"]
-
     if amp < 0.005:
         if analyzer.silence_start is None:
             analyzer.silence_start = time.time()
@@ -404,7 +351,20 @@ def map_to_lights(
     def bright(val: float) -> int:
         return max(min_b, min(max_b, int(min_b + (max_b - min_b) * val)))
 
-    if mode == "pulse":
+    if mode in ("auto", "automatic"):
+        targets = bands["full"] or bands["bass"] or bands["mid"] or bands["high"]
+        total = bass + mid + high + 1e-6
+        hue = (bass / total * 10 + mid / total * 140 + high / total * 250) % 360
+        sat = 55 + min(40, (bass + high) * 25)
+        if beat > 0.5:
+            ha.set_lights(targets, max_b, hs_color=(hue, min(95, sat + 20)), transition=0.05)
+            analyzer.hue = hue
+        else:
+            level = max(0.18, amp * 0.85 + bass * 0.25)
+            ha.set_lights(targets, bright(level), hs_color=(hue, sat), transition=transition)
+            analyzer.hue = hue
+
+    elif mode == "pulse":
         targets = bands["bass"] or bands["full"] or bands["mid"] or bands["high"]
         if beat > 0.5:
             ha.set_lights(targets, max_b, hs_color=(analyzer.hue % 360, 90), transition=0.05)
@@ -444,26 +404,13 @@ def map_to_lights(
 def start_ffmpeg() -> subprocess.Popen:
     rtmp_url = f"rtmp://0.0.0.0:1935/{RTMP_APP}/{RTMP_STREAM}"
     cmd = [
-        "ffmpeg",
-        "-hide_banner",
-        "-loglevel", "info",
-        "-listen", "1",
-        "-timeout", "0",
-        "-i", rtmp_url,
-        "-vn",
-        "-ac", str(CHANNELS),
-        "-ar", str(SAMPLE_RATE),
-        "-f", "s16le",
-        "-acodec", "pcm_s16le",
-        "pipe:1",
+        "ffmpeg", "-hide_banner", "-loglevel", "info",
+        "-listen", "1", "-timeout", "0", "-i", rtmp_url,
+        "-vn", "-ac", str(CHANNELS), "-ar", str(SAMPLE_RATE),
+        "-f", "s16le", "-acodec", "pcm_s16le", "pipe:1",
     ]
     log.info("Starting FFmpeg RTMP listener: %s", rtmp_url)
-    return subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        bufsize=0,
-    )
+    return subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
 
 
 def read_stderr(proc: subprocess.Popen):
@@ -502,17 +449,12 @@ def main():
         webui.start_server(state, port=WEBUI_PORT)
     else:
         state = _NullState()
-        log.warning("Running without Watchdog GUI")
 
     if not TOKEN:
-        msg = "SUPERVISOR_TOKEN missing - cannot talk to Home Assistant"
-        log.error(msg)
-        state.mark_error(msg)
+        log.error("SUPERVISOR_TOKEN missing")
         sys.exit(1)
-
     if not ENABLED:
-        log.info("Add-on is disabled in configuration.")
-        state.set(connection_state="disabled")
+        log.info("Add-on disabled")
         while True:
             time.sleep(1)
 
@@ -528,24 +470,12 @@ def main():
     ha = HomeAssistant()
     bands = resolve_band_lights(ha, profile)
     analyzer = AudioAnalyzer(beat_threshold=beat_thresh, base_hue=base_hue)
-
     all_entities = list(set(bands["bass"] + bands["mid"] + bands["high"] + bands["full"]))
 
-    state.set(
-        profile_name=profile.get("name", ""),
-        room=profile.get("room", ""),
-        mode=mode,
-        sensitivity=sensitivity,
-        bands=bands,
-        connection_state="waiting",
-    )
-    state.log_event(
-        f"Started - profile '{profile.get('name')}' mode '{mode}' lights={all_entities}",
-        "success",
-    )
+    state.set(profile_name=profile.get("name", ""), room=profile.get("room", ""),
+              mode=mode, sensitivity=sensitivity, bands=bands, connection_state="waiting")
 
     def shutdown(signum, frame):
-        log.info("Shutting down...")
         analyzer.running = False
         ha.all_off(all_entities)
         state.mark_stopped()
@@ -553,14 +483,7 @@ def main():
 
     signal.signal(signal.SIGTERM, shutdown)
     signal.signal(signal.SIGINT, shutdown)
-
-    log.info(
-        "Active: profile=%s mode=%s sensitivity=%.2f lights=%s",
-        profile.get("name"),
-        mode,
-        sensitivity,
-        all_entities,
-    )
+    log.info("Active: mode=%s sensitivity=%.2f lights=%s", mode, sensitivity, all_entities)
 
     while analyzer.running:
         proc = start_ffmpeg()
@@ -571,7 +494,6 @@ def main():
         last_data_at = time.time()
         last_log_sec = -1
         pcm_buf = bytearray()
-
         try:
             while analyzer.running and proc.poll() is None:
                 chunk = proc.stdout.read(BYTES_PER_CHUNK)
@@ -580,23 +502,17 @@ def main():
                         state.mark_no_signal()
                     time.sleep(0.02)
                     continue
-
                 last_data_at = time.time()
                 state.mark_chunk_received()
                 pcm_buf.extend(chunk)
-
                 while len(pcm_buf) >= BYTES_PER_CHUNK:
                     frame = bytes(pcm_buf[:BYTES_PER_CHUNK])
                     del pcm_buf[:BYTES_PER_CHUNK]
-
                     features = analyzer.process(frame, sensitivity)
                     state.set_features(features)
-
                     now = time.time()
                     if (now - last_update) * 1000 >= UPDATE_MS:
-                        map_to_lights(
-                            ha, analyzer, features, bands, mode, min_b, max_b, transition
-                        )
+                        map_to_lights(ha, analyzer, features, bands, mode, min_b, max_b, transition)
                         state.mark_light_update()
                         sec = int(now)
                         if sec != last_log_sec and sec % 2 == 0:
@@ -608,13 +524,8 @@ def main():
                                 pass
                             log.info(
                                 "audio amp=%.3f bass=%.3f mid=%.3f high=%.3f beat=%.0f peak=%d mode=%s",
-                                features["amplitude"],
-                                features["bass"],
-                                features["mid"],
-                                features["high"],
-                                features["beat"],
-                                peak,
-                                mode,
+                                features["amplitude"], features["bass"], features["mid"],
+                                features["high"], features["beat"], peak, mode,
                             )
                             last_log_sec = sec
                         last_update = now
@@ -628,7 +539,6 @@ def main():
                     proc.wait(timeout=3)
                 except subprocess.TimeoutExpired:
                     proc.kill()
-
         if analyzer.running:
             log.warning("FFmpeg exited - restarting in 3 s...")
             state.mark_ffmpeg_restart()
