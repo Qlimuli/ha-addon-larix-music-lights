@@ -35,8 +35,6 @@ _session.headers.update(
     }
 )
 
-# Keys that are top-level "global" (non-profile) options in config.yaml.
-# Kept here so the settings form and the save handler agree on what's valid.
 GLOBAL_KEYS = [
     "enabled",
     "active_profile",
@@ -55,6 +53,10 @@ GLOBAL_KEYS = [
     "log_level",
     "light_entities",
     "area_ids",
+    "bass_lights",
+    "mid_lights",
+    "high_lights",
+    "full_lights",
 ]
 
 PROFILE_KEYS = [
@@ -79,12 +81,7 @@ class ConfigApiError(Exception):
     pass
 
 
-# ---------------------------------------------------------------------------
-# Reading current options
-# ---------------------------------------------------------------------------
-
 def read_current_options() -> Dict[str, Any]:
-    """Read the add-on's current options straight from disk."""
     try:
         with open(OPTIONS_PATH, "r", encoding="utf-8") as f:
             return json.load(f)
@@ -94,10 +91,6 @@ def read_current_options() -> Dict[str, Any]:
         log.warning("Could not read %s: %s", OPTIONS_PATH, e)
         return {}
 
-
-# ---------------------------------------------------------------------------
-# Home Assistant lookups (lights / areas), proxied through Supervisor
-# ---------------------------------------------------------------------------
 
 def _ha_get(path: str) -> Optional[Any]:
     if not TOKEN:
@@ -115,7 +108,6 @@ def _ha_get(path: str) -> Optional[Any]:
 
 
 def list_light_entities() -> List[Dict[str, Any]]:
-    """Return every light.* entity with friendly name + area, for the picker."""
     states = _ha_get("/states") or []
     registry = _ha_get("/config/entity_registry/list") or []
     area_by_entity: Dict[str, str] = {}
@@ -144,13 +136,10 @@ def list_light_entities() -> List[Dict[str, Any]]:
 
 
 def list_areas() -> List[Dict[str, str]]:
-    """Return known areas as {area_id, name}. Falls back to raw area_ids
-    referenced by light entities if the area registry isn't reachable."""
     areas = _ha_get("/config/area_registry/list")
     if areas:
         return [{"area_id": a.get("area_id", ""), "name": a.get("name", a.get("area_id", ""))} for a in areas]
 
-    # Fallback: derive from whatever area_ids show up on light entities.
     seen = {}
     for light in list_light_entities():
         aid = light.get("area_id")
@@ -158,10 +147,6 @@ def list_areas() -> List[Dict[str, str]]:
             seen[aid] = aid
     return [{"area_id": k, "name": v} for k, v in sorted(seen.items())]
 
-
-# ---------------------------------------------------------------------------
-# Writing options back via the Supervisor API
-# ---------------------------------------------------------------------------
 
 def _sanitize_profile(p: Dict[str, Any]) -> Dict[str, Any]:
     clean = {}
@@ -175,8 +160,6 @@ def _sanitize_profile(p: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def sanitize_options(raw: Dict[str, Any]) -> Dict[str, Any]:
-    """Keep only known keys / coerce types so a bad payload can't corrupt
-    the options file. Raises ConfigApiError on anything unusable."""
     if not isinstance(raw, dict):
         raise ConfigApiError("Payload must be a JSON object")
 
@@ -192,6 +175,10 @@ def sanitize_options(raw: Dict[str, Any]) -> Dict[str, Any]:
 
     out.setdefault("light_entities", [])
     out.setdefault("area_ids", [])
+    out.setdefault("bass_lights", [])
+    out.setdefault("mid_lights", [])
+    out.setdefault("high_lights", [])
+    out.setdefault("full_lights", [])
 
     return out
 
@@ -214,6 +201,13 @@ def restart_addon() -> None:
         r = _session.post(f"{SUPERVISOR_URL}/addons/self/restart", timeout=30)
         r.raise_for_status()
     except Exception as e:
-        # The add-on process itself is about to die when the restart actually
-        # goes through, so a connection error here is often expected/benign.
         log.warning("Restart request returned an error (may still be applying): %s", e)
+
+
+def touch_reload_flag() -> None:
+    """Signal the analyzer loop to hot-reload options without process restart."""
+    try:
+        with open("/tmp/larix_reload", "w", encoding="utf-8") as f:
+            f.write("1")
+    except Exception as e:
+        log.warning("Could not write reload flag: %s", e)
