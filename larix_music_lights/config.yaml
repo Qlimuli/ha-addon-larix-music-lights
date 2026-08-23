@@ -1,8 +1,8 @@
 name: "Larix Music Reactive Lights"
 description: "Receive audio stream from Larix Broadcaster and make lights react to music (band-specific + room profiles)"
-version: "1.1.0"
+version: "1.1.1"
 slug: larix_music_lights
-init: false
+url: "https://github.com/Qlimuli/ha-addon-larix-music-lights"
 arch:
   - aarch64
   - amd64
@@ -10,6 +10,8 @@ arch:
   - armhf
 startup: application
 boot: auto
+init: false
+homeassistant_api: true
 ports:
   1935/tcp: 1935
   8890/udp: 8890
@@ -21,7 +23,6 @@ map:
 options:
   enabled: true
   active_profile: ""
-  # Global defaults (used when a profile does not override them)
   mode: spectrum
   sensitivity: 0.7
   update_interval_ms: 80
@@ -35,10 +36,8 @@ options:
   rtmp_app: live
   rtmp_stream: music
   log_level: info
-  # Legacy simple lists (used only if no profiles are defined)
   light_entities: []
   area_ids: []
-  # Room / named profiles with band-specific light assignments
   profiles: []
 schema:
   enabled: bool
@@ -65,14 +64,13 @@ schema:
       room: str?
       area_ids:
         - str
-      mode: list(pulse|spectrum|color_cycle|brightness|cinema)?
+      mode: str?
       sensitivity: float(0.1,2.0)?
       min_brightness: int(1,255)?
       max_brightness: int(1,255)?
       transition: float(0.0,2.0)?
       beat_threshold: float(0.1,1.0)?
       base_hue: int(0,360)?
-      # Band-specific light lists
       bass_lights:
         - str
       mid_lights:
@@ -81,10 +79,3 @@ schema:
         - str
       full_lights:
         - str
-homeassistant_api: true
-host_network: false
-privileged: false
-apparmor: true
-services:
-  - mqtt:want
-url: "https://github.com/Qlimuli/ha-addon-larix-music-lights"
