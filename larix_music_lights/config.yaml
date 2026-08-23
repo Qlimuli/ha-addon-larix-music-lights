@@ -1,6 +1,6 @@
 name: "Larix Music Reactive Lights"
 description: "Receive audio stream from Larix Broadcaster and make lights react to music (auto mode + room profiles + watchdog GUI)"
-version: "1.4.0"
+version: "1.4.1"
 slug: larix_music_lights
 url: "https://github.com/Qlimuli/ha-addon-larix-music-lights"
 arch:
