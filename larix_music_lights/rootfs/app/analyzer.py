@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Larix Music Reactive Lights - Audio analyzer & light controller (v1.4.0)
+Larix Music Reactive Lights - Audio analyzer & light controller (v1.4.1)
 """
 
 import os
@@ -300,6 +300,8 @@ class AudioAnalyzer:
         high = min(1.0, high * 8.0 * sensitivity)
         gain = 10.0 if peak < 2000 else 6.0
         amplitude = min(1.0, amplitude * gain * sensitivity)
+        peak_n = min(1.0, peak / 10000.0)
+        amplitude = min(1.0, max(amplitude, peak_n * 0.75 * sensitivity))
         self.bass_hist.append(bass)
         self.energy_hist.append(amplitude)
         beat = 0.0
@@ -353,15 +355,25 @@ def map_to_lights(
 
     if mode in ("auto", "automatic"):
         targets = bands["full"] or bands["bass"] or bands["mid"] or bands["high"]
+        energy = min(1.0, bass * 0.50 + mid * 0.30 + amp * 0.55 + high * 0.15)
+        level = energy ** 0.65
+        level = max(0.22, min(1.0, level * 1.45))
+
         total = bass + mid + high + 1e-6
-        hue = (bass / total * 10 + mid / total * 140 + high / total * 250) % 360
-        sat = 55 + min(40, (bass + high) * 25)
-        if beat > 0.5:
-            ha.set_lights(targets, max_b, hs_color=(hue, min(95, sat + 20)), transition=0.05)
+        hue = (bass / total * 8 + mid / total * 145 + high / total * 255) % 360
+        sat = 50 + min(45, (bass + high) * 30)
+
+        extreme_bass = bass >= 0.90 and amp >= 0.02
+        if beat > 0.5 or extreme_bass:
+            ha.set_lights(targets, max_b, hs_color=(0, 0), transition=0.03)
             analyzer.hue = hue
         else:
-            level = max(0.18, amp * 0.85 + bass * 0.25)
-            ha.set_lights(targets, bright(level), hs_color=(hue, sat), transition=transition)
+            ha.set_lights(
+                targets,
+                bright(level),
+                hs_color=(hue, sat),
+                transition=min(transition, 0.08),
+            )
             analyzer.hue = hue
 
     elif mode == "pulse":
