@@ -2,48 +2,57 @@ configuration:
   enabled:
     name: Enabled
     description: Enable or disable the music-reactive light control
+  active_profile:
+    name: Active profile
+    description: Name of the profile to use (must match a profile "name"). Leave empty to use the first profile.
   light_entities:
-    name: Light entities
-    description: List of light entity_ids (e.g. light.living_room)
+    name: Light entities (legacy)
+    description: Simple list of light entity_ids – only used when no profiles are defined
   area_ids:
-    name: Area IDs
-    description: Control all lights that belong to these areas (room IDs)
+    name: Area IDs (legacy)
+    description: Areas whose lights are controlled – only used when no profiles are defined
   mode:
-    name: Effect mode
-    description: "pulse = beat flash, spectrum = frequency colors, color_cycle = slow hue shift, brightness = volume only, cinema = warm dim"
+    name: Default effect mode
+    description: "pulse / spectrum / color_cycle / brightness / cinema (can be overridden per profile)"
   sensitivity:
-    name: Sensitivity
+    name: Default sensitivity
     description: How strongly the lights react (0.1–2.0)
   update_interval_ms:
     name: Update interval (ms)
-    description: How often lights are updated (lower = more reactive, higher CPU)
+    description: How often lights are updated
   transition:
-    name: Transition time (s)
+    name: Default transition time (s)
     description: Smoothness of brightness/color changes
   min_brightness:
-    name: Minimum brightness
-    description: Brightness never goes below this value (1–255)
+    name: Default minimum brightness
+    description: Brightness never goes below this value
   max_brightness:
-    name: Maximum brightness
-    description: Brightness never exceeds this value (1–255)
+    name: Default maximum brightness
+    description: Brightness never exceeds this value
   color_mode:
     name: Color mode
     description: Used by some effect modes
   base_hue:
-    name: Base hue
+    name: Default base hue
     description: Starting hue (0–360) for color effects
   beat_threshold:
-    name: Beat threshold
-    description: How strong a bass peak must be to trigger a beat (0.1–1.0)
+    name: Default beat threshold
+    description: How strong a bass peak must be to trigger a beat
   silence_timeout_s:
     name: Silence timeout (s)
     description: After this many seconds of silence the lights stop being updated
   rtmp_app:
     name: RTMP application
-    description: Application name in the RTMP URL (default live)
+    description: Application name in the RTMP URL
   rtmp_stream:
     name: RTMP stream name
-    description: Stream name in the RTMP URL (default music)
+    description: Stream name in the RTMP URL
   log_level:
     name: Log level
     description: Logging verbosity
+  profiles:
+    name: Profiles (by room)
+    description: >
+      List of named profiles. Each profile can have its own room, area_ids,
+      mode, sensitivity and band-specific light lists (bass_lights, mid_lights,
+      high_lights, full_lights). Select the active one with "active_profile".
