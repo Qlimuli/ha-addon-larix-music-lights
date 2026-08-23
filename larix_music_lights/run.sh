@@ -1,7 +1,7 @@
 #!/usr/bin/with-contenv bashio
-# ==============================================================================
-# Larix Music Reactive Lights Add-on
-# ==============================================================================
+# ============================================================================== 
+# Larix Music Reactive Lights Add-on (v1.1 – profiles + band lights)
+# ============================================================================== 
 
 set -e
 
@@ -9,6 +9,7 @@ bashio::log.info "Starting Larix Music Reactive Lights..."
 
 # Read configuration
 ENABLED=$(bashio::config 'enabled')
+ACTIVE_PROFILE=$(bashio::config 'active_profile')
 MODE=$(bashio::config 'mode')
 SENSITIVITY=$(bashio::config 'sensitivity')
 UPDATE_MS=$(bashio::config 'update_interval_ms')
@@ -23,15 +24,19 @@ RTMP_APP=$(bashio::config 'rtmp_app')
 RTMP_STREAM=$(bashio::config 'rtmp_stream')
 LOG_LEVEL=$(bashio::config 'log_level')
 
-# Light entities as JSON array
+# Legacy lists
 LIGHT_ENTITIES=$(bashio::config 'light_entities' | jq -c '.' 2>/dev/null || echo '[]')
 AREA_IDS=$(bashio::config 'area_ids' | jq -c '.' 2>/dev/null || echo '[]')
+
+# Profiles (list of objects)
+PROFILES=$(bashio::config 'profiles' | jq -c '.' 2>/dev/null || echo '[]')
 
 # Supervisor token for HA API
 export SUPERVISOR_TOKEN="${SUPERVISOR_TOKEN:-}"
 
 # Export all config for the Python process
 export ADDON_ENABLED="${ENABLED}"
+export ADDON_ACTIVE_PROFILE="${ACTIVE_PROFILE}"
 export ADDON_MODE="${MODE}"
 export ADDON_SENSITIVITY="${SENSITIVITY}"
 export ADDON_UPDATE_MS="${UPDATE_MS}"
@@ -47,9 +52,10 @@ export ADDON_RTMP_STREAM="${RTMP_STREAM}"
 export ADDON_LOG_LEVEL="${LOG_LEVEL}"
 export ADDON_LIGHT_ENTITIES="${LIGHT_ENTITIES}"
 export ADDON_AREA_IDS="${AREA_IDS}"
+export ADDON_PROFILES="${PROFILES}"
 
-bashio::log.info "Mode: ${MODE} | Sensitivity: ${SENSITIVITY} | Entities: ${LIGHT_ENTITIES}"
+bashio::log.info "Active profile: '${ACTIVE_PROFILE}' | Mode: ${MODE} | Profiles defined: $(echo "${PROFILES}" | jq 'length')"
 bashio::log.info "Waiting for RTMP stream on rtmp://0.0.0.0:1935/${RTMP_APP}/${RTMP_STREAM}"
 
-# Start the analyzer (it will launch ffmpeg itself)
+# Start the analyzer
 exec python3 /app/analyzer.py
