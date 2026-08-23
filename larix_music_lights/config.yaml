@@ -1,0 +1,63 @@
+name: "Larix Music Reactive Lights"
+description: "Receive audio stream from Larix Broadcaster and make lights react to music"
+version: "1.0.0"
+slug: larix_music_lights
+init: false
+arch:
+  - aarch64
+  - amd64
+  - armv7
+  - armhf
+startup: application
+boot: auto
+ports:
+  1935/tcp: 1935
+  8890/udp: 8890
+ports_description:
+  1935/tcp: RTMP stream input (Larix Broadcaster)
+  8890/udp: SRT stream input (optional)
+map:
+  - share:rw
+options:
+  enabled: true
+  light_entities: []
+  area_ids: []
+  mode: pulse
+  sensitivity: 0.7
+  update_interval_ms: 80
+  transition: 0.15
+  min_brightness: 10
+  max_brightness: 255
+  color_mode: spectrum
+  base_hue: 0
+  beat_threshold: 0.55
+  silence_timeout_s: 8
+  rtmp_app: live
+  rtmp_stream: music
+  log_level: info
+schema:
+  enabled: bool
+  light_entities:
+    - str
+  area_ids:
+    - str
+  mode: list(pulse|spectrum|color_cycle|brightness|cinema)
+  sensitivity: float(0.1,2.0)
+  update_interval_ms: int(30,500)
+  transition: float(0.0,2.0)
+  min_brightness: int(1,255)
+  max_brightness: int(1,255)
+  color_mode: list(spectrum|fixed|rainbow)
+  base_hue: int(0,360)
+  beat_threshold: float(0.1,1.0)
+  silence_timeout_s: int(2,60)
+  rtmp_app: str
+  rtmp_stream: str
+  log_level: list(debug|info|warning|error)
+homeassistant_api: true
+host_network: false
+privileged: false
+apparmor: true
+services:
+  - mqtt:want
+url: "https://github.com/Qlimuli/ha-addon-larix-music-lights"
