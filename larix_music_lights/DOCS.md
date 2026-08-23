@@ -2,6 +2,9 @@
 
 Dieses Add-on empfängt einen Audio-Stream von **Larix Broadcaster** (iOS/Android) und steuert Home-Assistant-Lampen in Echtzeit zur Musik.
 
+**Neu in 1.4:**
+Test
+
 **Neu in 1.3:**
 - **Settings-Tab im Ingress-Panel**: die komplette Konfiguration (Modus, Empfindlichkeit, Lampen, Bereiche, Profile) lässt sich jetzt per GUI einstellen, inklusive durchsuchbarer Lampen-Checkliste – kein manuelles Eintippen von `entity_id`s mehr nötig
 
