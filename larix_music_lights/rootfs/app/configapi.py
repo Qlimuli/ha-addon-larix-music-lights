@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Larix Music Reactive Lights - Config API v1.5.1"""
-import json, logging, os
+"""Larix Music Reactive Lights - Config API v1.6.0"""
+import json, logging, os, time
 from typing import Any, Dict, List, Optional
 import requests
 
@@ -48,7 +48,6 @@ def _ha_get(path: str) -> Optional[Any]:
         return None
 
 def list_light_entities() -> List[Dict[str, Any]]:
-    """Always work from /states – registry endpoints are optional."""
     states = _ha_get("/states") or []
     lights = []
     for s in states:
@@ -68,12 +67,7 @@ def list_areas() -> List[Dict[str, str]]:
     areas = _ha_get("/config/area_registry/list")
     if isinstance(areas, list) and areas:
         return [{"area_id": a.get("area_id",""), "name": a.get("name", a.get("area_id",""))} for a in areas]
-    seen = {}
-    for light in list_light_entities():
-        aid = light.get("area_id")
-        if aid and aid not in seen:
-            seen[aid] = aid
-    return [{"area_id": k, "name": v} for k, v in sorted(seen.items())]
+    return []
 
 def _sanitize_profile(p: Dict[str, Any]) -> Dict[str, Any]:
     clean = {}
@@ -88,36 +82,47 @@ def _sanitize_profile(p: Dict[str, Any]) -> Dict[str, Any]:
 def sanitize_options(raw: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(raw, dict):
         raise ConfigApiError("Payload must be a JSON object")
-    out: Dict[str, Any] = {}
+    out = read_current_options() or {}
     for key in GLOBAL_KEYS:
         if key in raw:
             out[key] = raw[key]
     if "update_interval_ms" in out:
         try:
-            out["update_interval_ms"] = max(180, min(500, int(out["update_interval_ms"])))
+            out["update_interval_ms"] = max(250, min(500, int(out["update_interval_ms"])))
         except Exception:
-            out["update_interval_ms"] = 250
-    profiles = raw.get("profiles", [])
-    if not isinstance(profiles, list):
-        raise ConfigApiError("profiles must be a list")
-    out["profiles"] = [_sanitize_profile(p) for p in profiles if isinstance(p, dict)]
+            out["update_interval_ms"] = 400
+    if "profiles" in raw:
+        profiles = raw.get("profiles", [])
+        if not isinstance(profiles, list):
+            raise ConfigApiError("profiles must be a list")
+        out["profiles"] = [_sanitize_profile(p) for p in profiles if isinstance(p, dict)]
     for k in ("light_entities","area_ids","bass_lights","mid_lights","high_lights","full_lights"):
         out.setdefault(k, [])
         if not isinstance(out[k], list):
             out[k] = []
     if not out.get("full_lights") and out.get("light_entities"):
         out["full_lights"] = list(out["light_entities"])
+    if out.get("full_lights") and not out.get("light_entities"):
+        out["light_entities"] = list(out["full_lights"])
     return out
 
 def save_options(options: Dict[str, Any]) -> None:
-    if not TOKEN:
-        raise ConfigApiError("SUPERVISOR_TOKEN missing")
     try:
-        r = _session.post(f"{SUPERVISOR_URL}/addons/self/options", json={"options": options}, timeout=15)
-        r.raise_for_status()
+        with open(OPTIONS_PATH, "w", encoding="utf-8") as f:
+            json.dump(options, f, indent=2, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
+        log.info("Wrote %s", OPTIONS_PATH)
     except Exception as e:
-        log.error("save options: %s", e)
-        raise ConfigApiError(f"Supervisor rejected options: {e}") from e
+        log.error("write options file: %s", e)
+        raise ConfigApiError(f"Cannot write options: {e}") from e
+    if TOKEN:
+        try:
+            r = _session.post(f"{SUPERVISOR_URL}/addons/self/options",
+                              json={"options": options}, timeout=15)
+            r.raise_for_status()
+        except Exception as e:
+            log.warning("Supervisor options API: %s (file already written)", e)
 
 def restart_addon() -> None:
     if not TOKEN:
@@ -129,7 +134,6 @@ def restart_addon() -> None:
 
 def touch_reload_flag() -> None:
     try:
-        import time
         with open("/tmp/larix_reload", "w", encoding="utf-8") as f:
             f.write(str(time.time()))
     except Exception as e:
