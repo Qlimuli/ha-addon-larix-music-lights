@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Larix Music Reactive Lights v1.5.0 – fire-and-forget + soft-reload"""
-import os, sys, json, time, logging, subprocess, threading, signal, colorsys
+"""Larix Music Reactive Lights v1.5.1 – fire-and-forget + soft-reload"""
+import os, sys, json, time, logging, subprocess, threading, signal, colorsys, hashlib
 from collections import deque
 from typing import Dict, List
 import numpy as np
@@ -252,24 +252,35 @@ def main():
     while az.running:
         proc = start_ff(); threading.Thread(target=read_err, args=(proc,), daemon=True).start()
         log.info("Waiting for Larix..."); state.mark_waiting()
-        last_up = 0.0; last_data = time.time(); last_log = -1; last_cfg = 0.0; cfg_mt = 0.0
+        last_up = 0.0; last_data = time.time(); last_log = -1; last_cfg = 0.0; cfg_hash = ""
         buf = bytearray()
         try:
             while az.running and proc.poll() is None:
                 now = time.time()
-                if now - last_cfg > 1.2:
+                if now - last_cfg > 2.0:
                     last_cfg = now
                     try:
-                        mt = os.path.getmtime("/data/options.json")
-                        if (cfg_mt and mt > cfg_mt) or os.path.isfile("/tmp/larix_reload"):
-                            if os.path.isfile("/tmp/larix_reload"):
-                                try: os.remove("/tmp/larix_reload")
-                                except OSError: pass
-                            bands = reload_cfg(); az.bt = BEAT_T; az._last.clear()
+                        want = os.path.isfile("/tmp/larix_reload")
+                        if want:
+                            try: os.remove("/tmp/larix_reload")
+                            except OSError: pass
+                        try:
+                            with open("/data/options.json","rb") as fh:
+                                h = hashlib.md5(fh.read()).hexdigest()
+                        except Exception:
+                            h = ""
+                        if want or (h and h != cfg_hash):
+                            prev_lights = list(LIGHTS)+list(BASS_L)+list(MID_L)+list(HIGH_L)
+                            bands = reload_cfg(); az.bt = BEAT_T
+                            new_lights = list(LIGHTS)+list(BASS_L)+list(MID_L)+list(HIGH_L)
+                            if prev_lights != new_lights:
+                                az._last.clear()
                             all_e = list(set(bands["bass"]+bands["mid"]+bands["high"]+bands["full"]))
                             state.set(mode=MODE, sensitivity=SENS, bands=bands)
                             state.log_event("Config live (kein Neustart)", "info")
-                        cfg_mt = mt
+                            cfg_hash = h
+                        elif h:
+                            cfg_hash = h
                     except Exception as e: log.debug("cfg: %s", e)
                 chunk = proc.stdout.read(BPC)
                 if not chunk:
