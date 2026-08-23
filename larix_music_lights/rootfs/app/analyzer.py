@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Larix Music Reactive Lights - Audio analyzer & light controller (v1.3.2)
+Larix Music Reactive Lights - Audio analyzer & light controller (v1.3.3)
 """
 
 import os
@@ -296,13 +296,20 @@ class AudioAnalyzer:
         self.running = True
 
     def process(self, pcm: bytes, sensitivity: float) -> Dict[str, float]:
-        if len(pcm) < BYTES_PER_CHUNK:
+        if len(pcm) < 1024:
             return {"amplitude": 0.0, "bass": 0.0, "mid": 0.0, "high": 0.0, "beat": 0.0}
 
+        if len(pcm) % 2:
+            pcm = pcm[:-1]
+
         samples = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
+        if samples.size == 0:
+            return {"amplitude": 0.0, "bass": 0.0, "mid": 0.0, "high": 0.0, "beat": 0.0}
+
+        peak = float(np.max(np.abs(samples))) if samples.size else 0.0
         samples /= 32768.0
         window = np.hanning(len(samples))
-        samples *= window
+        samples = samples * window
 
         fft = np.abs(np.fft.rfft(samples))
         freqs = np.fft.rfftfreq(len(samples), 1.0 / SAMPLE_RATE)
@@ -312,10 +319,11 @@ class AudioAnalyzer:
         high = self._band_energy(fft, freqs, 2000, 8000)
         amplitude = float(np.sqrt(np.mean(samples ** 2)))
 
-        bass = min(1.0, bass * 12.0 * sensitivity)
-        mid = min(1.0, mid * 10.0 * sensitivity)
-        high = min(1.0, high * 8.0 * sensitivity)
-        amplitude = min(1.0, amplitude * 8.0 * sensitivity)
+        bass = min(1.0, bass * 20.0 * sensitivity)
+        mid = min(1.0, mid * 16.0 * sensitivity)
+        high = min(1.0, high * 12.0 * sensitivity)
+        gain = 12.0 if peak < 2000 else 8.0
+        amplitude = min(1.0, amplitude * gain * sensitivity)
 
         self.bass_hist.append(bass)
         self.energy_hist.append(amplitude)
@@ -367,11 +375,7 @@ def resolve_band_lights(ha: HomeAssistant, profile: Dict[str, Any]) -> Dict[str,
         full or "(none)",
     )
     if not any([bass, mid, high, full]):
-        log.error(
-            "NO LIGHTS CONFIGURED - set light_entities in add-on options. "
-            "LEGACY_LIGHTS=%s",
-            LEGACY_LIGHTS,
-        )
+        log.error("NO LIGHTS CONFIGURED - LEGACY_LIGHTS=%s", LEGACY_LIGHTS)
     return {"bass": bass, "mid": mid, "high": high, "full": full}
 
 
@@ -422,11 +426,11 @@ def map_to_lights(
     elif mode == "color_cycle":
         analyzer.hue = (analyzer.hue + 2 + bass * 8) % 360
         targets = bands["full"] or bands["bass"] or bands["mid"] or bands["high"]
-        ha.set_lights(targets, bright(amp), hs_color=(analyzer.hue, 80), transition=transition)
+        ha.set_lights(targets, bright(max(0.2, amp)), hs_color=(analyzer.hue, 80), transition=transition)
 
     elif mode == "brightness":
         targets = bands["full"] or bands["bass"] or bands["mid"] or bands["high"]
-        ha.set_lights(targets, bright(amp), transition=transition)
+        ha.set_lights(targets, bright(max(0.15, amp)), transition=transition)
 
     elif mode == "cinema":
         targets = bands["full"] or bands["bass"] or bands["mid"] or bands["high"]
@@ -434,7 +438,7 @@ def map_to_lights(
 
     else:
         targets = bands["full"] or bands["bass"] or bands["mid"] or bands["high"]
-        ha.set_lights(targets, bright(amp), transition=transition)
+        ha.set_lights(targets, bright(max(0.15, amp)), transition=transition)
 
 
 def start_ffmpeg() -> subprocess.Popen:
@@ -468,10 +472,7 @@ def read_stderr(proc: subprocess.Popen):
     for line in iter(proc.stderr.readline, b""):
         if line:
             text = line.decode(errors="replace").rstrip()
-            if not text:
-                continue
-            # Skip noisy progress lines that are only size=
-            if text.startswith("size="):
+            if not text or text.startswith("size="):
                 continue
             low = text.lower()
             if any(k in low for k in ("error", "fail", "invalid", "unable", "not found")):
@@ -569,6 +570,7 @@ def main():
         last_update = 0.0
         last_data_at = time.time()
         last_log_sec = -1
+        pcm_buf = bytearray()
 
         try:
             while analyzer.running and proc.poll() is None:
@@ -576,33 +578,46 @@ def main():
                 if not chunk:
                     if time.time() - last_data_at > 4.0:
                         state.mark_no_signal()
-                    time.sleep(0.05)
+                    time.sleep(0.02)
                     continue
 
                 last_data_at = time.time()
                 state.mark_chunk_received()
-                features = analyzer.process(chunk, sensitivity)
-                state.set_features(features)
+                pcm_buf.extend(chunk)
 
-                now = time.time()
-                if (now - last_update) * 1000 >= UPDATE_MS:
-                    map_to_lights(
-                        ha, analyzer, features, bands, mode, min_b, max_b, transition
-                    )
-                    state.mark_light_update()
-                    sec = int(now)
-                    if sec != last_log_sec and sec % 2 == 0:
-                        log.info(
-                            "audio amp=%.3f bass=%.3f mid=%.3f high=%.3f beat=%.0f mode=%s",
-                            features["amplitude"],
-                            features["bass"],
-                            features["mid"],
-                            features["high"],
-                            features["beat"],
-                            mode,
+                while len(pcm_buf) >= BYTES_PER_CHUNK:
+                    frame = bytes(pcm_buf[:BYTES_PER_CHUNK])
+                    del pcm_buf[:BYTES_PER_CHUNK]
+
+                    features = analyzer.process(frame, sensitivity)
+                    state.set_features(features)
+
+                    now = time.time()
+                    if (now - last_update) * 1000 >= UPDATE_MS:
+                        map_to_lights(
+                            ha, analyzer, features, bands, mode, min_b, max_b, transition
                         )
-                        last_log_sec = sec
-                    last_update = now
+                        state.mark_light_update()
+                        sec = int(now)
+                        if sec != last_log_sec and sec % 2 == 0:
+                            peak = 0
+                            try:
+                                s = np.frombuffer(frame, dtype=np.int16)
+                                peak = int(np.max(np.abs(s))) if len(s) else 0
+                            except Exception:
+                                pass
+                            log.info(
+                                "audio amp=%.3f bass=%.3f mid=%.3f high=%.3f beat=%.0f peak=%d mode=%s",
+                                features["amplitude"],
+                                features["bass"],
+                                features["mid"],
+                                features["high"],
+                                features["beat"],
+                                peak,
+                                mode,
+                            )
+                            last_log_sec = sec
+                        last_update = now
         except Exception as e:
             log.error("Main loop error: %s", e)
             state.mark_error(str(e))
