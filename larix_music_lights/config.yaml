@@ -1,6 +1,6 @@
 name: "Larix Music Reactive Lights"
 description: "Receive audio stream from Larix Broadcaster and make lights react to music (Zigbee-friendly, hot-reload)"
-version: "1.5.0"
+version: "1.5.1"
 slug: larix_music_lights
 url: "https://github.com/Qlimuli/ha-addon-larix-music-lights"
 arch:
@@ -30,13 +30,13 @@ options:
   active_profile: ""
   mode: auto
   sensitivity: 1.2
-  update_interval_ms: 250
-  transition: 0.12
-  min_brightness: 30
+  update_interval_ms: 280
+  transition: 0.1
+  min_brightness: 35
   max_brightness: 255
   color_mode: spectrum
   base_hue: 0
-  beat_threshold: 0.45
+  beat_threshold: 0.4
   silence_timeout_s: 8
   rtmp_app: live
   rtmp_stream: music
