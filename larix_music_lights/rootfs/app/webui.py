@@ -1264,3 +1264,4 @@ def start_server(state: WatchdogState, host: str = "0.0.0.0", port: int = 8099) 
     thread.start()
     log.info("Web UI listening on %s:%s", host, port)
     return server
+    
