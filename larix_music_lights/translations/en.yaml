@@ -1,0 +1,49 @@
+configuration:
+  enabled:
+    name: Enabled
+    description: Enable or disable the music-reactive light control
+  light_entities:
+    name: Light entities
+    description: List of light entity_ids (e.g. light.living_room)
+  area_ids:
+    name: Area IDs
+    description: Control all lights that belong to these areas (room IDs)
+  mode:
+    name: Effect mode
+    description: "pulse = beat flash, spectrum = frequency colors, color_cycle = slow hue shift, brightness = volume only, cinema = warm dim"
+  sensitivity:
+    name: Sensitivity
+    description: How strongly the lights react (0.1–2.0)
+  update_interval_ms:
+    name: Update interval (ms)
+    description: How often lights are updated (lower = more reactive, higher CPU)
+  transition:
+    name: Transition time (s)
+    description: Smoothness of brightness/color changes
+  min_brightness:
+    name: Minimum brightness
+    description: Brightness never goes below this value (1–255)
+  max_brightness:
+    name: Maximum brightness
+    description: Brightness never exceeds this value (1–255)
+  color_mode:
+    name: Color mode
+    description: Used by some effect modes
+  base_hue:
+    name: Base hue
+    description: Starting hue (0–360) for color effects
+  beat_threshold:
+    name: Beat threshold
+    description: How strong a bass peak must be to trigger a beat (0.1–1.0)
+  silence_timeout_s:
+    name: Silence timeout (s)
+    description: After this many seconds of silence the lights stop being updated
+  rtmp_app:
+    name: RTMP application
+    description: Application name in the RTMP URL (default live)
+  rtmp_stream:
+    name: RTMP stream name
+    description: Stream name in the RTMP URL (default music)
+  log_level:
+    name: Log level
+    description: Logging verbosity
