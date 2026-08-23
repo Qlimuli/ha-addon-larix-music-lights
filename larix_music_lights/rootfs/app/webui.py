@@ -260,24 +260,117 @@ PAGE_HTML = r"""<!DOCTYPE html>
     padding: 8px 10px;
     font-size: 14px;
   }
-  input[type="range"] { width: 100%; }
-  .toggle-row { display: flex; align-items: center; gap: 10px; }
-  .toggle-row input[type="checkbox"] { width: 18px; height: 18px; }
+  input[type="checkbox"] { accent-color: var(--accent); }
 
   .btn {
     background: var(--accent);
     color: #fff;
     border: none;
-    border-radius: 8px;
-    padding: 9px 16px;
+    border-radius: 999px;
+    padding: 11px 20px;
     font-size: 13px;
     font-weight: 600;
     cursor: pointer;
   }
   .btn:hover { filter: brightness(1.08); }
+  .btn:active { transform: scale(0.98); }
   .btn.secondary { background: #262b34; color: var(--text); }
   .btn.danger { background: #4a1c22; color: #ffb4bc; }
-  .btn.small { padding: 5px 10px; font-size: 12px; }
+  .btn.small { padding: 6px 12px; font-size: 12px; }
+
+  /* ---- Nicer panel headers with an icon bubble ---- */
+  .panel h2 .h2-title { display: flex; align-items: center; gap: 8px; }
+  .panel h2 .h2-icon {
+    width: 24px; height: 24px;
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px;
+    background: rgba(91, 141, 255, 0.15);
+  }
+
+  /* ---- Toggle switch (replaces the plain checkbox for "enabled") ---- */
+  .switch { position: relative; display: inline-block; width: 46px; height: 26px; flex: none; }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .switch .track {
+    position: absolute; inset: 0; cursor: pointer;
+    background: #2b2f38; border-radius: 999px; transition: background 0.15s ease;
+  }
+  .switch .track::before {
+    content: ""; position: absolute; height: 20px; width: 20px; left: 3px; bottom: 3px;
+    background: #fff; border-radius: 50%; transition: transform 0.15s ease;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+  }
+  .switch input:checked + .track { background: var(--accent); }
+  .switch input:checked + .track::before { transform: translateX(20px); }
+  .toggle-row { display: flex; align-items: center; gap: 12px; }
+  .toggle-row .toggle-label { font-size: 14px; font-weight: 600; }
+  .toggle-row .toggle-sub { font-size: 12px; color: var(--text-dim); }
+
+  /* ---- Dropdown styled as a single row (icon + value + chevron), like a picker row ---- */
+  .select-row {
+    display: flex; align-items: center; gap: 10px;
+    background: #0b0d11; border: 1px solid var(--card-border);
+    border-radius: 10px; padding: 2px 12px;
+  }
+  .select-row .select-icon { font-size: 17px; flex: none; }
+  .select-row select {
+    border: none; background: transparent; padding: 10px 4px; appearance: none;
+    -webkit-appearance: none;
+  }
+  .select-row::after {
+    content: "";
+  }
+
+  /* ---- Icon + slider + value rows, à la "Microphone sensitivity" sliders ---- */
+  .slider-field { margin-bottom: 18px; }
+  .slider-field .slider-label {
+    display: flex; justify-content: space-between; align-items: baseline;
+    font-size: 13px; color: var(--text); margin-bottom: 8px;
+  }
+  .slider-field .slider-label .slider-val {
+    font-size: 12px; font-weight: 700; color: var(--accent);
+    background: rgba(91, 141, 255, 0.12);
+    border-radius: 999px; padding: 2px 10px;
+  }
+  .slider-row { display: flex; align-items: center; gap: 12px; }
+  .slider-row .slider-icon {
+    width: 30px; height: 30px; border-radius: 50%;
+    background: #0b0d11; border: 1px solid var(--card-border);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px; flex: none;
+  }
+  input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 6px;
+    border-radius: 999px;
+    background: #262b34;
+    outline: none;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 20px; height: 20px;
+    border-radius: 50%;
+    background: var(--accent);
+    border: 3px solid #10131a;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.5);
+    cursor: pointer;
+    margin-top: -1px;
+  }
+  input[type="range"]::-moz-range-thumb {
+    width: 20px; height: 20px;
+    border-radius: 50%;
+    background: var(--accent);
+    border: 3px solid #10131a;
+    cursor: pointer;
+  }
+  input[type="range"]::-moz-range-track {
+    height: 6px; border-radius: 999px; background: #262b34;
+  }
+  input[type="range"].hue-slider {
+    background: linear-gradient(90deg, #ff3b30, #ffcc00, #34c759, #34d1c3, #5b8dff, #af52de, #ff3b30);
+  }
 
   .picker {
     border: 1px solid var(--card-border);
@@ -304,6 +397,7 @@ PAGE_HTML = r"""<!DOCTYPE html>
     font-size: 13px;
   }
   .picker-row:hover { background: #161a21; }
+  .picker-row:has(input:checked) { background: rgba(91, 141, 255, 0.12); }
   .picker-row .entity-id { color: var(--text-dim); font-size: 11px; margin-left: auto; white-space: nowrap; }
   .picker-count { font-size: 11px; color: var(--text-dim); padding: 4px 8px 6px; }
 
@@ -438,87 +532,124 @@ PAGE_HTML = r"""<!DOCTYPE html>
   <div class="tab-panel" id="tab-settings">
 
     <div class="panel">
-      <h2>Allgemein</h2>
+      <h2><span class="h2-title"><span class="h2-icon">⚙️</span>Allgemein</span></h2>
       <div class="toggle-row field">
-        <input type="checkbox" id="cfg_enabled">
-        <label for="cfg_enabled" style="margin:0;">Add-on aktiviert</label>
+        <label class="switch">
+          <input type="checkbox" id="cfg_enabled">
+          <span class="track"></span>
+        </label>
+        <div>
+          <div class="toggle-label">Add-on aktiviert</div>
+          <div class="toggle-sub">Lichtsteuerung ein-/ausschalten</div>
+        </div>
       </div>
       <div class="field-row">
         <div class="field">
           <label for="cfg_active_profile">Aktives Profil</label>
-          <select id="cfg_active_profile"></select>
+          <div class="select-row"><span class="select-icon">🏠</span><select id="cfg_active_profile"></select></div>
           <div class="hint">Leer = Legacy-Modus (Licht-/Bereichsauswahl unten).</div>
         </div>
         <div class="field">
           <label for="cfg_mode">Modus</label>
-          <select id="cfg_mode">
+          <div class="select-row"><span class="select-icon">🎛️</span><select id="cfg_mode">
             <option value="pulse">Pulse</option>
             <option value="spectrum">Spectrum</option>
             <option value="color_cycle">Color Cycle</option>
             <option value="brightness">Brightness</option>
             <option value="cinema">Cinema</option>
-          </select>
+          </select></div>
         </div>
         <div class="field">
           <label for="cfg_color_mode">Farbmodus</label>
-          <select id="cfg_color_mode">
+          <div class="select-row"><span class="select-icon">🎨</span><select id="cfg_color_mode">
             <option value="spectrum">Spectrum</option>
             <option value="fixed">Fest</option>
             <option value="rainbow">Regenbogen</option>
-          </select>
+          </select></div>
         </div>
         <div class="field">
           <label for="cfg_log_level">Log-Level</label>
-          <select id="cfg_log_level">
+          <div class="select-row"><span class="select-icon">📋</span><select id="cfg_log_level">
             <option value="debug">Debug</option>
             <option value="info">Info</option>
             <option value="warning">Warning</option>
             <option value="error">Error</option>
-          </select>
+          </select></div>
         </div>
       </div>
     </div>
 
     <div class="panel">
-      <h2>Empfindlichkeit &amp; Timing</h2>
+      <h2><span class="h2-title"><span class="h2-icon">🎚️</span>Empfindlichkeit &amp; Timing</span></h2>
+
+      <div class="slider-field">
+        <div class="slider-label"><span>Empfindlichkeit</span><span class="slider-val" id="val_cfg_sensitivity">0.7x</span></div>
+        <div class="slider-row">
+          <div class="slider-icon">🎤</div>
+          <input type="range" id="cfg_sensitivity" min="0.1" max="2.0" step="0.05">
+        </div>
+      </div>
+
+      <div class="slider-field">
+        <div class="slider-label"><span>Beat-Schwelle</span><span class="slider-val" id="val_cfg_beat_threshold">0.55</span></div>
+        <div class="slider-row">
+          <div class="slider-icon">🥁</div>
+          <input type="range" id="cfg_beat_threshold" min="0.1" max="1.0" step="0.05">
+        </div>
+      </div>
+
+      <div class="slider-field">
+        <div class="slider-label"><span>Basis-Farbton</span><span class="slider-val" id="val_cfg_base_hue">0°</span></div>
+        <div class="slider-row">
+          <div class="slider-icon">🖌️</div>
+          <input type="range" class="hue-slider" id="cfg_base_hue" min="0" max="360" step="1">
+        </div>
+      </div>
+
       <div class="field-row">
-        <div class="field">
-          <label for="cfg_sensitivity">Empfindlichkeit (0.1 - 2.0)</label>
-          <input type="number" id="cfg_sensitivity" min="0.1" max="2.0" step="0.05">
+        <div class="slider-field" style="margin-bottom:0;">
+          <div class="slider-label"><span>Min. Helligkeit</span><span class="slider-val" id="val_cfg_min_brightness">10</span></div>
+          <div class="slider-row">
+            <div class="slider-icon">🔅</div>
+            <input type="range" id="cfg_min_brightness" min="1" max="255" step="1">
+          </div>
         </div>
-        <div class="field">
-          <label for="cfg_beat_threshold">Beat-Schwelle (0.1 - 1.0)</label>
-          <input type="number" id="cfg_beat_threshold" min="0.1" max="1.0" step="0.05">
+        <div class="slider-field" style="margin-bottom:0;">
+          <div class="slider-label"><span>Max. Helligkeit</span><span class="slider-val" id="val_cfg_max_brightness">255</span></div>
+          <div class="slider-row">
+            <div class="slider-icon">🔆</div>
+            <input type="range" id="cfg_max_brightness" min="1" max="255" step="1">
+          </div>
         </div>
-        <div class="field">
-          <label for="cfg_update_interval_ms">Update-Intervall (ms)</label>
-          <input type="number" id="cfg_update_interval_ms" min="30" max="500" step="10">
+      </div>
+
+      <div class="field-row" style="margin-top: 18px;">
+        <div class="slider-field" style="margin-bottom:0;">
+          <div class="slider-label"><span>Übergang</span><span class="slider-val" id="val_cfg_transition">0.15 s</span></div>
+          <div class="slider-row">
+            <div class="slider-icon">🌊</div>
+            <input type="range" id="cfg_transition" min="0" max="2.0" step="0.05">
+          </div>
         </div>
-        <div class="field">
-          <label for="cfg_transition">Übergang (s)</label>
-          <input type="number" id="cfg_transition" min="0" max="2.0" step="0.05">
+        <div class="slider-field" style="margin-bottom:0;">
+          <div class="slider-label"><span>Update-Intervall</span><span class="slider-val" id="val_cfg_update_interval_ms">80 ms</span></div>
+          <div class="slider-row">
+            <div class="slider-icon">⚡</div>
+            <input type="range" id="cfg_update_interval_ms" min="30" max="500" step="10">
+          </div>
         </div>
-        <div class="field">
-          <label for="cfg_silence_timeout_s">Stille-Timeout (s)</label>
-          <input type="number" id="cfg_silence_timeout_s" min="2" max="60" step="1">
-        </div>
-        <div class="field">
-          <label for="cfg_base_hue">Basis-Farbton (0 - 360)</label>
-          <input type="number" id="cfg_base_hue" min="0" max="360" step="1">
-        </div>
-        <div class="field">
-          <label for="cfg_min_brightness">Min. Helligkeit (1 - 255)</label>
-          <input type="number" id="cfg_min_brightness" min="1" max="255" step="1">
-        </div>
-        <div class="field">
-          <label for="cfg_max_brightness">Max. Helligkeit (1 - 255)</label>
-          <input type="number" id="cfg_max_brightness" min="1" max="255" step="1">
+        <div class="slider-field" style="margin-bottom:0;">
+          <div class="slider-label"><span>Stille-Timeout</span><span class="slider-val" id="val_cfg_silence_timeout_s">8 s</span></div>
+          <div class="slider-row">
+            <div class="slider-icon">🌙</div>
+            <input type="range" id="cfg_silence_timeout_s" min="2" max="60" step="1">
+          </div>
         </div>
       </div>
     </div>
 
     <div class="panel">
-      <h2>RTMP-Eingang</h2>
+      <h2><span class="h2-title"><span class="h2-icon">📡</span>RTMP-Eingang</span></h2>
       <div class="field-row">
         <div class="field">
           <label for="cfg_rtmp_app">RTMP App</label>
@@ -532,30 +663,28 @@ PAGE_HTML = r"""<!DOCTYPE html>
     </div>
 
     <div class="panel">
-      <h2>Lampen &amp; Bereiche (Legacy / ohne Profil)</h2>
+      <h2><span class="h2-title"><span class="h2-icon">💡</span>Lampen &amp; Bereiche</span></h2>
+      <div class="hint" style="margin-bottom: 12px;">Wird nur verwendet, wenn kein aktives Profil gesetzt ist (siehe „Allgemein“ oben).</div>
       <div class="field">
         <label>Lampen</label>
         <div class="picker" id="picker_light_entities"></div>
       </div>
-      <div class="field" style="margin-top: 12px;">
+      <div class="field" style="margin-top: 14px;">
         <label>Bereiche</label>
         <div class="picker" id="picker_area_ids"></div>
       </div>
-      <div class="hint">Wird nur verwendet, wenn kein aktives Profil gesetzt ist.</div>
     </div>
 
     <div class="panel">
-      <h2>
-        Raum-Profile
-        <button class="btn small" onclick="addProfileCard()">+ Profil hinzufügen</button>
-      </h2>
+      <h2><span class="h2-title"><span class="h2-icon">🏠</span>Raum-Profile</span></h2>
       <div id="profilesContainer"></div>
       <div class="empty" id="profilesEmpty">Noch keine Profile angelegt.</div>
+      <button class="btn secondary small" style="margin-top: 8px;" onclick="addProfileCard()">+ Profil hinzufügen</button>
     </div>
 
     <div class="save-bar">
-      <button class="btn" onclick="saveSettings()">Speichern &amp; neu starten</button>
-      <button class="btn secondary" onclick="loadSettings()">Verwerfen / Neu laden</button>
+      <button class="btn" onclick="saveSettings()">▶ Speichern &amp; neu starten</button>
+      <button class="btn secondary" onclick="loadSettings()">Verwerfen</button>
       <span class="save-status" id="saveStatus"></span>
     </div>
 
@@ -677,6 +806,37 @@ let allLights = [];
 let allAreas = [];
 let settingsLoaded = false;
 let profileCounter = 0;
+
+const SLIDER_FORMATS = {
+  cfg_sensitivity: v => Number(v).toFixed(2) + "x",
+  cfg_beat_threshold: v => Number(v).toFixed(2),
+  cfg_base_hue: v => Math.round(v) + "°",
+  cfg_min_brightness: v => Math.round(v),
+  cfg_max_brightness: v => Math.round(v),
+  cfg_transition: v => Number(v).toFixed(2) + " s",
+  cfg_update_interval_ms: v => Math.round(v) + " ms",
+  cfg_silence_timeout_s: v => Math.round(v) + " s",
+};
+
+function updateSliderDisplay(id) {
+  const el = document.getElementById(id);
+  const out = document.getElementById("val_" + id);
+  if (!el || !out) return;
+  const fmt = SLIDER_FORMATS[id] || (v => v);
+  out.textContent = fmt(el.value);
+}
+
+function setSliderValue(id, value) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.value = value;
+  updateSliderDisplay(id);
+}
+
+Object.keys(SLIDER_FORMATS).forEach(id => {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener("input", () => updateSliderDisplay(id));
+});
 
 function escapeHtml(s) {
   return String(s == null ? "" : s).replace(/[&<>"']/g, c => ({
@@ -914,14 +1074,14 @@ async function loadSettings() {
     document.getElementById("cfg_mode").value = cfg.mode || "spectrum";
     document.getElementById("cfg_color_mode").value = cfg.color_mode || "spectrum";
     document.getElementById("cfg_log_level").value = cfg.log_level || "info";
-    document.getElementById("cfg_sensitivity").value = cfg.sensitivity ?? 0.7;
-    document.getElementById("cfg_beat_threshold").value = cfg.beat_threshold ?? 0.55;
-    document.getElementById("cfg_update_interval_ms").value = cfg.update_interval_ms ?? 80;
-    document.getElementById("cfg_transition").value = cfg.transition ?? 0.15;
-    document.getElementById("cfg_silence_timeout_s").value = cfg.silence_timeout_s ?? 8;
-    document.getElementById("cfg_base_hue").value = cfg.base_hue ?? 0;
-    document.getElementById("cfg_min_brightness").value = cfg.min_brightness ?? 10;
-    document.getElementById("cfg_max_brightness").value = cfg.max_brightness ?? 255;
+    setSliderValue("cfg_sensitivity", cfg.sensitivity ?? 0.7);
+    setSliderValue("cfg_beat_threshold", cfg.beat_threshold ?? 0.55);
+    setSliderValue("cfg_update_interval_ms", cfg.update_interval_ms ?? 80);
+    setSliderValue("cfg_transition", cfg.transition ?? 0.15);
+    setSliderValue("cfg_silence_timeout_s", cfg.silence_timeout_s ?? 8);
+    setSliderValue("cfg_base_hue", cfg.base_hue ?? 0);
+    setSliderValue("cfg_min_brightness", cfg.min_brightness ?? 10);
+    setSliderValue("cfg_max_brightness", cfg.max_brightness ?? 255);
     document.getElementById("cfg_rtmp_app").value = cfg.rtmp_app || "live";
     document.getElementById("cfg_rtmp_stream").value = cfg.rtmp_stream || "music";
 
