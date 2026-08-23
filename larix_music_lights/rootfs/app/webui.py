@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Larix Music Reactive Lights - Web UI (v1.4)"""
+"""Larix Music Reactive Lights - Web UI (v1.5)"""
 
 import json
 import logging
@@ -15,18 +15,19 @@ log = logging.getLogger("larix-music.webui")
 
 _HTML_PATH = Path(__file__).resolve().parent / "static" / "index.html"
 
+# Set by analyzer.main() so save can trigger live reload without restart
+RELOAD_CALLBACK = None
+
+
 def _page_html() -> bytes:
     return _HTML_PATH.read_bytes()
 
 
-
 class WebRequestHandler(BaseHTTPRequestHandler):
-    # Set by start_server() before the server starts accepting connections.
     state: WatchdogState = None  # type: ignore[assignment]
+    server_version = "LarixMusicWebUI/1.5"
 
-    server_version = "LarixMusicWebUI/1.4"
-
-    def log_message(self, fmt: str, *args) -> None:  # noqa: A002 - stdlib signature
+    def log_message(self, fmt: str, *args) -> None:
         log.debug("%s - %s", self.address_string(), fmt % args)
 
     def _send(self, status: int, content_type: str, body: bytes) -> None:
@@ -43,7 +44,7 @@ class WebRequestHandler(BaseHTTPRequestHandler):
     def _send_json(self, status: int, payload) -> None:
         self._send(status, "application/json; charset=utf-8", json.dumps(payload).encode("utf-8"))
 
-    def do_GET(self) -> None:  # noqa: N802 - stdlib method name
+    def do_GET(self) -> None:
         path = urlparse(self.path).path.rstrip("/") or "/"
 
         if path in ("/", "/index.html"):
@@ -76,7 +77,7 @@ class WebRequestHandler(BaseHTTPRequestHandler):
 
         self._send(404, "text/plain; charset=utf-8", b"Not found")
 
-    def do_POST(self) -> None:  # noqa: N802 - stdlib method name
+    def do_POST(self) -> None:
         path = urlparse(self.path).path.rstrip("/") or "/"
 
         if path == "/api/config":
@@ -86,10 +87,14 @@ class WebRequestHandler(BaseHTTPRequestHandler):
                 payload = json.loads(raw_body.decode("utf-8"))
                 clean = configapi.sanitize_options(payload)
                 configapi.save_options(clean)
-                self.state.log_event("Einstellungen gespeichert - Add-on wird neu gestartet", "info")
-                self._send_json(200, {"ok": True})
-                # Restart after responding, so the browser gets confirmation first.
-                threading.Thread(target=configapi.restart_addon, daemon=True).start()
+                configapi.touch_reload_flag()
+                if RELOAD_CALLBACK:
+                    try:
+                        RELOAD_CALLBACK()
+                    except Exception as e:
+                        log.warning("reload callback: %s", e)
+                self.state.log_event("Einstellungen live übernommen (kein Neustart)", "info")
+                self._send_json(200, {"ok": True, "hot_reload": True})
             except configapi.ConfigApiError as e:
                 self._send_json(400, {"ok": False, "error": str(e)})
             except Exception as e:
@@ -97,11 +102,18 @@ class WebRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(500, {"ok": False, "error": str(e)})
             return
 
+        if path == "/api/restart":
+            try:
+                self._send_json(200, {"ok": True})
+                threading.Thread(target=configapi.restart_addon, daemon=True).start()
+            except Exception as e:
+                self._send_json(500, {"ok": False, "error": str(e)})
+            return
+
         self._send(404, "text/plain; charset=utf-8", b"Not found")
 
 
 def start_server(state: WatchdogState, host: str = "0.0.0.0", port: int = 8099) -> ThreadingHTTPServer:
-    """Start the web UI (status dashboard + settings) in a background thread."""
     WebRequestHandler.state = state
     server = ThreadingHTTPServer((host, port), WebRequestHandler)
     thread = threading.Thread(target=server.serve_forever, name="webui", daemon=True)
