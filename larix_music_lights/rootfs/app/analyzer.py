@@ -19,6 +19,9 @@ from typing import List, Optional, Dict, Any
 import numpy as np
 import requests
 
+import webui
+from watchdog_state import WatchdogState
+
 # ---------------------------------------------------------------------------
 # Configuration from environment (set by run.sh / bashio)
 # ---------------------------------------------------------------------------
@@ -37,6 +40,7 @@ SILENCE_S = int(os.getenv("ADDON_SILENCE_S", "8"))
 RTMP_APP = os.getenv("ADDON_RTMP_APP", "live")
 RTMP_STREAM = os.getenv("ADDON_RTMP_STREAM", "music")
 LOG_LEVEL = os.getenv("ADDON_LOG_LEVEL", "info").upper()
+WEBUI_PORT = int(os.getenv("ADDON_WEBUI_PORT", "8099"))
 
 try:
     LEGACY_LIGHTS: List[str] = json.loads(os.getenv("ADDON_LIGHT_ENTITIES", "[]"))
@@ -68,6 +72,9 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 log = logging.getLogger("larix-music")
+
+# Populated in main() and shared with the Watchdog GUI thread.
+state: Optional[WatchdogState] = None
 
 
 def load_active_profile() -> Dict[str, Any]:
@@ -418,12 +425,34 @@ def read_stderr(proc: subprocess.Popen):
 
 
 def main():
+    global state
+    state = WatchdogState()
+    state.set(enabled=ENABLED, rtmp_url=f"rtmp://<HA-IP>:1935/{RTMP_APP}/{RTMP_STREAM}")
+
+    # Start the Watchdog GUI immediately so the ingress panel is reachable
+    # even while the add-on is starting, disabled, or waiting for a stream.
+    webui.start_server(state, port=WEBUI_PORT)
+
     if not TOKEN:
-        log.error("SUPERVISOR_TOKEN missing - cannot talk to Home Assistant")
+        msg = "SUPERVISOR_TOKEN missing - cannot talk to Home Assistant"
+        log.error(msg)
+        state.mark_error(msg)
         sys.exit(1)
 
     if not ENABLED:
-        log.info("Add-on is disabled in configuration. Exiting.")
+        log.info("Add-on is disabled in configuration.")
+        state.set(connection_state="disabled")
+        state.log_event("Add-on ist in der Konfiguration deaktiviert.", "info")
+        running = {"flag": True}
+
+        def stop(signum, frame):
+            running["flag"] = False
+
+        signal.signal(signal.SIGTERM, stop)
+        signal.signal(signal.SIGINT, stop)
+        while running["flag"]:
+            time.sleep(1)
+        state.mark_stopped()
         sys.exit(0)
 
     profile = load_active_profile()
@@ -443,10 +472,23 @@ def main():
         set(bands["bass"] + bands["mid"] + bands["high"] + bands["full"])
     )
 
+    state.set(
+        profile_name=profile.get("name", ""),
+        room=profile.get("room", ""),
+        mode=mode,
+        sensitivity=sensitivity,
+        bands=bands,
+        connection_state="waiting",
+    )
+    state.log_event(
+        f"Add-on gestartet - Profil '{profile.get('name')}' / Modus '{mode}'", "success"
+    )
+
     def shutdown(signum, frame):
         log.info("Shutting down...")
         analyzer.running = False
         ha.all_off(all_entities)
+        state.mark_stopped()
         sys.exit(0)
 
     signal.signal(signal.SIGTERM, shutdown)
@@ -459,26 +501,38 @@ def main():
         sensitivity,
     )
 
+    NO_SIGNAL_TIMEOUT_S = 4.0
+
     while analyzer.running:
         proc = start_ffmpeg()
         threading.Thread(target=read_stderr, args=(proc,), daemon=True).start()
 
         log.info("Waiting for Larix Broadcaster to connect...")
+        state.mark_waiting()
         last_update = 0.0
+        last_data_at = time.time()
 
         try:
             while analyzer.running and proc.poll() is None:
                 chunk = proc.stdout.read(BYTES_PER_CHUNK)
                 if not chunk:
+                    if time.time() - last_data_at > NO_SIGNAL_TIMEOUT_S:
+                        state.mark_no_signal()
                     time.sleep(0.05)
                     continue
 
+                last_data_at = time.time()
+                state.mark_chunk_received()
+
                 features = analyzer.process(chunk, sensitivity)
+                state.set_features(features)
+
                 now = time.time()
                 if (now - last_update) * 1000 >= UPDATE_MS:
                     map_to_lights(
                         ha, analyzer, features, bands, mode, min_b, max_b, transition
                     )
+                    state.mark_light_update()
                     last_update = now
                     if LOG_LEVEL == "DEBUG":
                         log.debug(
@@ -491,6 +545,7 @@ def main():
                         )
         except Exception as e:
             log.error("Main loop error: %s", e)
+            state.mark_error(str(e))
         finally:
             if proc.poll() is None:
                 proc.terminate()
@@ -499,8 +554,10 @@ def main():
                 except subprocess.TimeoutExpired:
                     proc.kill()
 
-        log.warning("FFmpeg exited - restarting in 3 s...")
-        time.sleep(3)
+        if analyzer.running:
+            log.warning("FFmpeg exited - restarting in 3 s...")
+            state.mark_ffmpeg_restart()
+            time.sleep(3)
 
 
 if __name__ == "__main__":

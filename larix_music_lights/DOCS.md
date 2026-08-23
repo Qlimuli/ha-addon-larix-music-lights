@@ -2,9 +2,32 @@
 
 Dieses Add-on empfängt einen Audio-Stream von **Larix Broadcaster** (iOS/Android) und steuert Home-Assistant-Lampen in Echtzeit zur Musik.
 
+**Neu in 1.2:**
+- **Watchdog-GUI**: Live-Statusseite direkt in der Home-Assistant-Seitenleiste (Ingress)
+
 **Neu in 1.1:**
 - **Band-Zuweisung**: Bass-, Mid- und High-Lampen getrennt konfigurieren
 - **Profile pro Raum**: Mehrere benannte Profile speichern und per `active_profile` auswählen
+
+## Watchdog-GUI
+
+Nach dem Start des Add-ons erscheint links in der Home-Assistant-Seitenleiste ein neuer Eintrag
+**"Larix Music Reactive Lights"** (Symbol: Equalizer). Darüber öffnet sich das eingebettete
+Watchdog-Panel mit:
+
+- **Statusanzeige**: `Startet…`, `Wartet auf Larix`, `Verbunden`, `Kein Signal`, `Deaktiviert` oder `Gestoppt`
+- **Live-Pegel**: Bass / Mitten / Höhen / Amplitude als animierte Balken, plus Beat-Blinkanzeige
+- **Info-Kacheln**: aktives Profil & Raum, Modus, Laufzeit, Anzahl FFmpeg-Neustarts, Anzahl Stream-Verbindungen, letzter Fehler
+- **RTMP-Eingang**: die aktuell konfigurierte URL (App/Stream-Name), zur Kontrolle gegen die Larix-Konfiguration
+- **Ereignis-Log**: die letzten Verbindungs-, Neustart- und Fehlerereignisse mit Zeitstempel
+
+Das Panel aktualisiert sich automatisch alle 800 ms (per Polling, kein externer Dienst, keine
+Internetverbindung nötig) und funktioniert auch, wenn `enabled: false` gesetzt ist – dann zeigt es
+lediglich den Status "Deaktiviert" an, statt komplett zu verschwinden.
+
+Technisch läuft dafür ein kleiner in `analyzer.py` eingebetteter Webserver (nur Python-Standardbibliothek,
+keine zusätzliche Abhängigkeit) intern auf Port `8099`, der von Home Assistant per Ingress durchgereicht
+wird. Ein zusätzlicher offener Port nach außen ist dafür nicht nötig.
 
 ## Voraussetzungen
 

@@ -1,6 +1,6 @@
 name: "Larix Music Reactive Lights"
-description: "Receive audio stream from Larix Broadcaster and make lights react to music (band-specific + room profiles)"
-version: "1.1.1"
+description: "Receive audio stream from Larix Broadcaster and make lights react to music (band-specific + room profiles + watchdog GUI)"
+version: "1.2.0"
 slug: larix_music_lights
 url: "https://github.com/Qlimuli/ha-addon-larix-music-lights"
 arch:
@@ -12,6 +12,9 @@ startup: application
 boot: auto
 init: false
 homeassistant_api: true
+ingress: true
+ingress_port: 8099
+panel_icon: mdi:equalizer
 ports:
   1935/tcp: 1935
   8890/udp: 8890

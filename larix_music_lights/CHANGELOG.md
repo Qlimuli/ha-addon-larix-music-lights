@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.0
+- **Watchdog-GUI**: Neues Ingress-Panel ("Larix Music Reactive Lights" in der HA-Seitenleiste) mit Live-Status
+- Zeigt Verbindungsstatus (Startet / Wartet auf Larix / Verbunden / Kein Signal / Deaktiviert / Gestoppt)
+- Live-Pegel-Meter für Bass, Mitten, Höhen und Amplitude inkl. Beat-Anzeige
+- Aktives Profil, Modus, Laufzeit, Anzahl FFmpeg-Neustarts und Stream-Verbindungen
+- Ereignis-Log der letzten Verbindungs-/Fehlerereignisse
+- Läuft komplett lokal ohne externe Ressourcen (kein CDN, kein zusätzlicher Port erforderlich)
+
 ## 1.1.0
 - **Profile pro Raum**: Mehrere benannte Profile speichern (`profiles` + `active_profile`)
 - **Band-Zuweisung**: `bass_lights`, `mid_lights`, `high_lights`, `full_lights` pro Profil

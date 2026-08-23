@@ -25,4 +25,7 @@ RUN chmod a+x /run.sh /app/analyzer.py
 
 WORKDIR /app
 
+# Watchdog GUI (served via Home Assistant Ingress)
+EXPOSE 8099
+
 CMD ["/run.sh"]
