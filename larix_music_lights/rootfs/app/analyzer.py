@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Larix Music Reactive Lights analyzer v1.4.2 – Zigbee-friendly"""
+"""Larix Music Reactive Lights analyzer v1.4.3 – relative bands + onset flash"""
 import os, sys, json, time, logging, subprocess, threading, signal, colorsys
 from collections import deque
 from typing import List, Optional, Dict, Any
@@ -139,8 +139,12 @@ class HomeAssistant:
 
 class AudioAnalyzer:
     def __init__(self, beat_threshold, base_hue):
-        self.bass_hist = deque(maxlen=30)
-        self.peak_hist = deque(maxlen=80)
+        self.bass_hist = deque(maxlen=40)
+        self.energy_hist = deque(maxlen=40)
+        self.peak_hist = deque(maxlen=100)
+        self.bass_raw_hist = deque(maxlen=100)
+        self.mid_raw_hist = deque(maxlen=100)
+        self.high_raw_hist = deque(maxlen=100)
         self.last_beat = 0.0
         self.hue = float(base_hue)
         self.beat_threshold = beat_threshold
@@ -150,6 +154,9 @@ class AudioAnalyzer:
         self._last_bri = -1
         self._last_hue = -1.0
         self._last_sat = -1.0
+        self._bass_max = 1e-6
+        self._mid_max = 1e-6
+        self._high_max = 1e-6
 
     def process(self, pcm, sensitivity):
         if len(pcm) < 1024:
@@ -164,24 +171,41 @@ class AudioAnalyzer:
         w = samples * np.hanning(len(samples))
         fft = np.abs(np.fft.rfft(w))
         freqs = np.fft.rfftfreq(len(w), 1.0 / SAMPLE_RATE)
-        bass_raw = self._band(fft, freqs, 20, 150)
-        mid_raw = self._band(fft, freqs, 150, 2000)
-        high_raw = self._band(fft, freqs, 2000, 8000)
+        bass_raw = self._band(fft, freqs, 20, 180)
+        mid_raw = self._band(fft, freqs, 180, 2000)
+        high_raw = self._band(fft, freqs, 2000, 9000)
         rms = float(np.sqrt(np.mean(samples ** 2)))
+
         self.peak_hist.append(peak)
-        ref = max(max(self.peak_hist), 400.0)
-        amp = min(1.0, (peak / ref) * 0.95 * sensitivity)
-        amp = max(amp, min(1.0, rms * 25.0 * sensitivity))
-        scale = (sensitivity * 8.0) / max(ref / 3000.0, 0.35)
-        bass = min(1.0, bass_raw * scale)
-        mid = min(1.0, mid_raw * scale * 0.9)
-        high = min(1.0, high_raw * scale * 0.8)
+        pref = max(max(self.peak_hist), 500.0)
+        amp = min(1.0, (peak / pref) * sensitivity)
+        amp = max(amp, min(1.0, rms * 22.0 * sensitivity))
+
+        # Relative band scaling with slow-decay max – never stuck at 1.0
+        decay = 0.985
+        self._bass_max = max(bass_raw, self._bass_max * decay)
+        self._mid_max = max(mid_raw, self._mid_max * decay)
+        self._high_max = max(high_raw, self._high_max * decay)
+        bass = min(1.0, (bass_raw / (self._bass_max + 1e-12)) ** 0.75)
+        mid = min(1.0, (mid_raw / (self._mid_max + 1e-12)) ** 0.75)
+        high = min(1.0, (high_raw / (self._high_max + 1e-12)) ** 0.75)
+        bass = min(1.0, bass * (0.85 + 0.25 * sensitivity))
+        mid = min(1.0, mid * (0.85 + 0.25 * sensitivity))
+        high = min(1.0, high * (0.85 + 0.25 * sensitivity))
+
         self.bass_hist.append(bass)
+        self.energy_hist.append(amp)
+        self.bass_raw_hist.append(bass_raw)
+
         beat = 0.0
         now = time.time()
-        if len(self.bass_hist) >= 5:
-            avg = sum(self.bass_hist) / len(self.bass_hist)
-            if bass > avg * (1.0 + self.beat_threshold) and (now - self.last_beat) > 0.28:
+        if len(self.energy_hist) >= 8 and (now - self.last_beat) > 0.22:
+            e_avg = sum(self.energy_hist) / len(self.energy_hist)
+            b_avg = sum(self.bass_hist) / len(self.bass_hist)
+            onset = (amp > e_avg * (1.15 + self.beat_threshold * 0.5) and amp > 0.18)
+            bass_hit = (bass > b_avg * 1.35 and bass > 0.55 and amp > 0.12)
+            peak_hit = peak > pref * 0.55 and amp > 0.30
+            if onset or bass_hit or peak_hit:
                 beat = 1.0
                 self.last_beat = now
         return dict(amplitude=amp, bass=bass, mid=mid, high=high, beat=beat)
@@ -231,20 +255,20 @@ def map_to_lights(ha, analyzer, features, bands, mode, min_b, max_b, transition,
     targets = bands["full"] or bands["bass"] or bands["mid"] or bands["high"]
 
     if mode in ("auto", "automatic", "pulse"):
-        energy = min(1.0, amp * 0.70 + bass * 0.45 + mid * 0.25 + high * 0.10)
-        level = max(0.35, min(1.0, (energy ** 0.55) * 1.15))
+        energy = min(1.0, amp * 0.65 + bass * 0.40 + mid * 0.25 + high * 0.12)
+        level = max(0.28, min(1.0, (energy ** 0.50) * 1.20))
         total = bass + mid + high + 1e-6
-        hue = (bass / total * 5 + mid / total * 140 + high / total * 260) % 360
-        sat = 40 + min(55, bass * 35 + high * 25)
-        extreme = (beat > 0.5) or (bass >= 0.75 and amp >= 0.25)
-        if extreme:
+        hue = (bass / total * 8 + mid / total * 145 + high / total * 255) % 360
+        sat = 35 + min(55, bass * 30 + high * 30)
+        flash = (beat > 0.5) or (amp >= 0.45 and bass >= 0.55) or (amp >= 0.70)
+        if flash:
             if should_send(max_b, 0.0, 0.0, force=True):
                 ha.set_lights(targets, max_b, hs_color=(0, 0), transition=0.0)
             analyzer.hue = hue
         else:
             bri = bright(level)
             if should_send(bri, hue, sat):
-                ha.set_lights(targets, bri, hs_color=(hue, sat), transition=min(transition, 0.15))
+                ha.set_lights(targets, bri, hs_color=(hue, sat), transition=min(transition, 0.12))
             analyzer.hue = hue
         return
 
