@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Larix Music Reactive Lights v1.6.1 – beat-focused, faster response"""
+"""Larix Music Reactive Lights v1.6.2 – colorful auto patterns"""
 import os, sys, json, time, logging, subprocess, threading, signal, colorsys, hashlib
 from collections import deque
 from typing import Dict, List
@@ -127,6 +127,10 @@ class Analyzer:
         self._hold_bri = None
         self._hold_hue = 200.0
         self._hold_sat = 40.0
+        self._sustain_t0 = 0.0
+        self._post_beat_until = 0.0
+        self._pattern_phase = 0.0
+        self._last_palette_hue = 200.0
 
     def process(self, pcm, sens):
         if len(pcm) < 1024:
@@ -202,30 +206,76 @@ def map_lights(ha, az, f, bands, mode, min_b, max_b, trans, iv):
         return
 
     if mode == "auto":
+        now = time.time()
         tot = bass + mid + high + 1e-6
-        base_hue = (bass / tot * 20 + mid / tot * 140 + high / tot * 250) % 360
-        base_sat = 25 + min(40, mid * 25 + high * 20)
-        ambient = bright(0.22 + 0.18 * min(1.0, amp))
+        az._pattern_phase = (az._pattern_phase + 0.8 + amp * 2.5 + beat * 12) % 360
+        spectrum_hue = (bass / tot * 15 + mid / tot * 150 + high / tot * 265) % 360
+        base_hue = (0.65 * spectrum_hue + 0.35 * az._pattern_phase) % 360
+        base_sat = 40 + min(50, bass * 20 + mid * 25 + high * 30)
+
+        energy = min(1.0, amp * 0.55 + bass * 0.35 + mid * 0.2)
+        ambient = bright(0.20 + 0.35 * energy)
+
+        loud = energy >= 0.72 or amp >= 0.85
+        if loud:
+            if az._sustain_t0 <= 0:
+                az._sustain_t0 = now
+        else:
+            az._sustain_t0 = 0.0
+        sustain_s = (now - az._sustain_t0) if az._sustain_t0 > 0 else 0.0
+
         if beat > 0.5:
-            flash_bri = max_b
             for e in targets:
-                if az.ok(e, flash_bri, 0, 0, 0.0, force=True):
-                    ha.set_lights([e], flash_bri, hs=(0, 0), trans=0.0)
-            az._hold_bri = ambient
+                if az.ok(e, max_b, 0, 0, 0.0, force=True):
+                    ha.set_lights([e], max_b, hs=(0, 0), trans=0.0)
+            az._post_beat_until = now + 0.28
+            az._hold_bri = max_b
             az._hold_hue = base_hue
-            az._hold_sat = base_sat
+            az._hold_sat = min(90, base_sat + 15)
+            az._last_palette_hue = base_hue
             return
+
+        if now < az._post_beat_until:
+            bloom_bri = bright(0.75 + 0.25 * energy)
+            for e in targets:
+                if az.ok(e, bloom_bri, base_hue, min(95, base_sat + 20), 0.12, force=True):
+                    ha.set_lights([e], bloom_bri, hs=(base_hue, min(95, base_sat + 20)), trans=0.06)
+            az._hold_bri = bloom_bri
+            az._hold_hue = base_hue
+            az._hold_sat = min(95, base_sat + 20)
+            return
+
+        if sustain_s >= 0.45:
+            if sustain_s < 0.9:
+                t = min(1.0, (sustain_s - 0.45) / 0.45)
+                sat = int(8 + t * base_sat)
+                hue = base_hue
+            else:
+                hue = (base_hue + (sustain_s - 0.9) * 80) % 360
+                sat = min(95, int(base_sat + 15))
+            bri = max_b if energy > 0.8 else bright(0.9)
+            min_iv = max(0.18, iv * 0.9)
+            for e in targets:
+                if az.ok(e, bri, hue, sat, min_iv, force=False):
+                    ha.set_lights([e], bri, hs=(hue, sat), trans=0.08)
+            az._hold_bri = bri
+            az._hold_hue = hue
+            az._hold_sat = sat
+            return
+
         if az._hold_bri is None:
             az._hold_bri = ambient
             az._hold_hue = base_hue
             az._hold_sat = base_sat
-        az._hold_bri = int(0.6 * az._hold_bri + 0.4 * ambient)
-        az._hold_hue = 0.7 * az._hold_hue + 0.3 * base_hue
-        az._hold_sat = 0.7 * az._hold_sat + 0.3 * base_sat
-        min_iv = max(0.35, iv * 1.5)
+        target_bri = bright(0.25 + 0.55 * energy)
+        az._hold_bri = int(0.55 * az._hold_bri + 0.45 * target_bri)
+        dh = ((base_hue - az._hold_hue + 540) % 360) - 180
+        az._hold_hue = (az._hold_hue + dh * 0.35) % 360
+        az._hold_sat = 0.65 * az._hold_sat + 0.35 * base_sat
+        min_iv = max(0.28, iv * 1.2)
         for e in targets:
             if az.ok(e, az._hold_bri, az._hold_hue, az._hold_sat, min_iv, force=False):
-                ha.set_lights([e], az._hold_bri, hs=(az._hold_hue, az._hold_sat), trans=0.08)
+                ha.set_lights([e], az._hold_bri, hs=(az._hold_hue, az._hold_sat), trans=0.1)
         return
 
     if mode == "pulse":
