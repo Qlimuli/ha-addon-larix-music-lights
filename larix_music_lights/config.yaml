@@ -1,6 +1,6 @@
 name: "Larix Music Reactive Lights"
-description: "Receive audio stream from Larix Broadcaster and make lights react to music (beat-focused, Zigbee-safe)"
-version: "1.6.1"
+description: "Receive audio stream from Larix Broadcaster and make lights react to music (beat-focused, colorful auto)"
+version: "1.6.2"
 slug: larix_music_lights
 url: "https://github.com/Qlimuli/ha-addon-larix-music-lights"
 arch:
