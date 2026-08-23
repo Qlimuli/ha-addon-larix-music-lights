@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Larix Music Reactive Lights - Config API v1.6.0"""
+"""Larix Music Reactive Lights - Config API v1.6.1"""
 import json, logging, os, time
 from typing import Any, Dict, List, Optional
 import requests
@@ -88,9 +88,9 @@ def sanitize_options(raw: Dict[str, Any]) -> Dict[str, Any]:
             out[key] = raw[key]
     if "update_interval_ms" in out:
         try:
-            out["update_interval_ms"] = max(250, min(500, int(out["update_interval_ms"])))
+            out["update_interval_ms"] = max(120, min(500, int(out["update_interval_ms"])))
         except Exception:
-            out["update_interval_ms"] = 400
+            out["update_interval_ms"] = 180
     if "profiles" in raw:
         profiles = raw.get("profiles", [])
         if not isinstance(profiles, list):
