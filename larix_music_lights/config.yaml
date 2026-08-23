@@ -1,6 +1,6 @@
 name: "Larix Music Reactive Lights"
-description: "Receive audio stream from Larix Broadcaster and make lights react to music (band-specific + room profiles + watchdog GUI)"
-version: "1.3.3"
+description: "Receive audio stream from Larix Broadcaster and make lights react to music (auto mode + room profiles + watchdog GUI)"
+version: "1.4.0"
 slug: larix_music_lights
 url: "https://github.com/Qlimuli/ha-addon-larix-music-lights"
 arch:
@@ -28,11 +28,11 @@ map:
 options:
   enabled: true
   active_profile: ""
-  mode: spectrum
-  sensitivity: 0.7
+  mode: auto
+  sensitivity: 1.0
   update_interval_ms: 80
   transition: 0.15
-  min_brightness: 10
+  min_brightness: 20
   max_brightness: 255
   color_mode: spectrum
   base_hue: 0
@@ -47,7 +47,7 @@ options:
 schema:
   enabled: bool
   active_profile: str
-  mode: list(pulse|spectrum|color_cycle|brightness|cinema)
+  mode: list(auto|pulse|spectrum|color_cycle|brightness|cinema)
   sensitivity: float(0.1,2.0)
   update_interval_ms: int(30,500)
   transition: float(0.0,2.0)
