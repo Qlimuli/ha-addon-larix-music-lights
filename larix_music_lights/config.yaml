@@ -1,6 +1,6 @@
 name: "Larix Music Reactive Lights"
-description: "Receive audio stream from Larix Broadcaster and make lights react to music"
-version: "1.0.0"
+description: "Receive audio stream from Larix Broadcaster and make lights react to music (band-specific + room profiles)"
+version: "1.1.0"
 slug: larix_music_lights
 init: false
 arch:
@@ -20,9 +20,9 @@ map:
   - share:rw
 options:
   enabled: true
-  light_entities: []
-  area_ids: []
-  mode: pulse
+  active_profile: ""
+  # Global defaults (used when a profile does not override them)
+  mode: spectrum
   sensitivity: 0.7
   update_interval_ms: 80
   transition: 0.15
@@ -35,12 +35,14 @@ options:
   rtmp_app: live
   rtmp_stream: music
   log_level: info
+  # Legacy simple lists (used only if no profiles are defined)
+  light_entities: []
+  area_ids: []
+  # Room / named profiles with band-specific light assignments
+  profiles: []
 schema:
   enabled: bool
-  light_entities:
-    - str
-  area_ids:
-    - str
+  active_profile: str
   mode: list(pulse|spectrum|color_cycle|brightness|cinema)
   sensitivity: float(0.1,2.0)
   update_interval_ms: int(30,500)
@@ -54,6 +56,31 @@ schema:
   rtmp_app: str
   rtmp_stream: str
   log_level: list(debug|info|warning|error)
+  light_entities:
+    - str
+  area_ids:
+    - str
+  profiles:
+    - name: str
+      room: str?
+      area_ids:
+        - str
+      mode: list(pulse|spectrum|color_cycle|brightness|cinema)?
+      sensitivity: float(0.1,2.0)?
+      min_brightness: int(1,255)?
+      max_brightness: int(1,255)?
+      transition: float(0.0,2.0)?
+      beat_threshold: float(0.1,1.0)?
+      base_hue: int(0,360)?
+      # Band-specific light lists
+      bass_lights:
+        - str
+      mid_lights:
+        - str
+      high_lights:
+        - str
+      full_lights:
+        - str
 homeassistant_api: true
 host_network: false
 privileged: false
