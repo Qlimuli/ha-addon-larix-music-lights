@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Larix Music Reactive Lights v1.6.2 – colorful auto patterns"""
+"""Larix Music Reactive Lights v1.6.3 – multi-lamp cascade"""
 import os, sys, json, time, logging, subprocess, threading, signal, colorsys, hashlib
 from collections import deque
 from typing import Dict, List
@@ -131,6 +131,11 @@ class Analyzer:
         self._post_beat_until = 0.0
         self._pattern_phase = 0.0
         self._last_palette_hue = 200.0
+        self._casc_n = 0
+        self._casc_active = False
+        self._casc_drop_at = 0.0
+        self._casc_last_step = 0.0
+        self._casc_order = []
 
     def process(self, pcm, sens):
         if len(pcm) < 1024:
@@ -224,6 +229,57 @@ def map_lights(ha, az, f, bands, mode, min_b, max_b, trans, iv):
             az._sustain_t0 = 0.0
         sustain_s = (now - az._sustain_t0) if az._sustain_t0 > 0 else 0.0
 
+        n = len(targets)
+        multi = n >= 2
+
+        if multi:
+            if az._casc_active and az._casc_n > 0 and now >= az._casc_drop_at:
+                drop_bri = bright(0.22 + 0.25 * energy)
+                for e in targets:
+                    if az.ok(e, drop_bri, base_hue, base_sat, 0.0, force=True):
+                        ha.set_lights([e], drop_bri, hs=(base_hue, base_sat), trans=0.18)
+                az._casc_n = 0
+                az._casc_active = False
+                az._hold_bri = drop_bri
+                az._hold_hue = base_hue
+                az._hold_sat = base_sat
+                return
+
+            step = beat > 0.5 or (loud and sustain_s > 0.15 and (now - az._casc_last_step) > 0.28)
+            if step and (now - az._casc_last_step) > 0.22:
+                if not az._casc_active or az._casc_n <= 0:
+                    az._casc_order = list(targets)
+                    rot = int(az._pattern_phase / 60) % n
+                    az._casc_order = az._casc_order[rot:] + az._casc_order[:rot]
+                    az._casc_n = 0
+                    az._casc_active = True
+                if az._casc_n < n:
+                    az._casc_n += 1
+                    az._casc_last_step = now
+                    if az._casc_n >= n:
+                        az._casc_drop_at = now + 0.55 + 0.12 * n
+                    else:
+                        az._casc_drop_at = now + 0.85
+
+            if az._casc_active and az._casc_n > 0:
+                up = az._casc_order[:az._casc_n]
+                down = az._casc_order[az._casc_n:]
+                if beat > 0.5:
+                    up_hue, up_sat, up_bri = 0, 0, max_b
+                else:
+                    up_hue, up_sat, up_bri = base_hue, min(90, base_sat + 20), max_b
+                for e in up:
+                    if az.ok(e, up_bri, up_hue, up_sat, 0.15, force=beat > 0.5):
+                        ha.set_lights([e], up_bri, hs=(up_hue, up_sat), trans=0.04)
+                dim = bright(0.15 + 0.2 * energy)
+                for e in down:
+                    if az.ok(e, dim, base_hue, max(25, base_sat - 15), max(0.35, iv * 1.5)):
+                        ha.set_lights([e], dim, hs=(base_hue, max(25, base_sat - 15)), trans=0.12)
+                az._hold_bri = up_bri
+                az._hold_hue = up_hue
+                az._hold_sat = up_sat
+                return
+
         if beat > 0.5:
             for e in targets:
                 if az.ok(e, max_b, 0, 0, 0.0, force=True):
@@ -232,7 +288,6 @@ def map_lights(ha, az, f, bands, mode, min_b, max_b, trans, iv):
             az._hold_bri = max_b
             az._hold_hue = base_hue
             az._hold_sat = min(90, base_sat + 15)
-            az._last_palette_hue = base_hue
             return
 
         if now < az._post_beat_until:
@@ -445,6 +500,8 @@ def main():
                             if prev != new:
                                 az._last.clear()
                                 az._hold_bri = None
+                                az._casc_active = False
+                                az._casc_n = 0
                             all_e = list(set(bands["bass"] + bands["mid"] + bands["high"] + bands["full"]))
                             state.set(mode=MODE, sensitivity=SENS, bands=bands)
                             state.log_event("Config live (kein Neustart)", "info")
