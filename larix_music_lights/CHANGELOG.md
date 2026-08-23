@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.3.0
+- **Neuer Tab "Einstellungen" im Ingress-Panel**: die komplette Konfiguration lässt sich jetzt per GUI bearbeiten statt nur über den YAML-Tab "Konfiguration" im Supervisor
+- Lampen-Auswahl über eine durchsuchbare Checkbox-Liste (Name + Entity-ID) statt manuellem Eintippen von `entity_id`s
+- Bereichs-Auswahl (Areas) ebenfalls als Checkbox-Liste
+- Raum-Profile lassen sich direkt in der GUI anlegen, bearbeiten und löschen, inkl. separater Bass-/Mitten-/Höhen-/Fallback-Lampenauswahl pro Profil
+- "Speichern & neu starten" schreibt die Optionen über die Supervisor-API und startet das Add-on automatisch neu, damit Änderungen sofort aktiv werden
+- Erfordert neu `hassio_api: true` + `hassio_role: manager`, damit das Add-on seine eigenen Optionen schreiben und sich selbst neu starten darf
+
 ## 1.2.0
 - **Watchdog-GUI**: Neues Ingress-Panel ("Larix Music Reactive Lights" in der HA-Seitenleiste) mit Live-Status
 - Zeigt Verbindungsstatus (Startet / Wartet auf Larix / Verbunden / Kein Signal / Deaktiviert / Gestoppt)

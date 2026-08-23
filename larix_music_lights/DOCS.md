@@ -2,6 +2,9 @@
 
 Dieses Add-on empfängt einen Audio-Stream von **Larix Broadcaster** (iOS/Android) und steuert Home-Assistant-Lampen in Echtzeit zur Musik.
 
+**Neu in 1.3:**
+- **Settings-Tab im Ingress-Panel**: die komplette Konfiguration (Modus, Empfindlichkeit, Lampen, Bereiche, Profile) lässt sich jetzt per GUI einstellen, inklusive durchsuchbarer Lampen-Checkliste – kein manuelles Eintippen von `entity_id`s mehr nötig
+
 **Neu in 1.2:**
 - **Watchdog-GUI**: Live-Statusseite direkt in der Home-Assistant-Seitenleiste (Ingress)
 
@@ -9,25 +12,40 @@ Dieses Add-on empfängt einen Audio-Stream von **Larix Broadcaster** (iOS/Androi
 - **Band-Zuweisung**: Bass-, Mid- und High-Lampen getrennt konfigurieren
 - **Profile pro Raum**: Mehrere benannte Profile speichern und per `active_profile` auswählen
 
-## Watchdog-GUI
+## GUI (Ingress-Panel)
 
 Nach dem Start des Add-ons erscheint links in der Home-Assistant-Seitenleiste ein neuer Eintrag
-**"Larix Music Reactive Lights"** (Symbol: Equalizer). Darüber öffnet sich das eingebettete
-Watchdog-Panel mit:
+**"Larix Music Reactive Lights"** (Symbol: Equalizer). Das Panel hat zwei Tabs:
 
+### Tab "Status"
 - **Statusanzeige**: `Startet…`, `Wartet auf Larix`, `Verbunden`, `Kein Signal`, `Deaktiviert` oder `Gestoppt`
 - **Live-Pegel**: Bass / Mitten / Höhen / Amplitude als animierte Balken, plus Beat-Blinkanzeige
 - **Info-Kacheln**: aktives Profil & Raum, Modus, Laufzeit, Anzahl FFmpeg-Neustarts, Anzahl Stream-Verbindungen, letzter Fehler
 - **RTMP-Eingang**: die aktuell konfigurierte URL (App/Stream-Name), zur Kontrolle gegen die Larix-Konfiguration
 - **Ereignis-Log**: die letzten Verbindungs-, Neustart- und Fehlerereignisse mit Zeitstempel
 
-Das Panel aktualisiert sich automatisch alle 800 ms (per Polling, kein externer Dienst, keine
-Internetverbindung nötig) und funktioniert auch, wenn `enabled: false` gesetzt ist – dann zeigt es
-lediglich den Status "Deaktiviert" an, statt komplett zu verschwinden.
+Aktualisiert sich automatisch alle 800 ms per Polling, keine Internetverbindung nötig.
 
-Technisch läuft dafür ein kleiner in `analyzer.py` eingebetteter Webserver (nur Python-Standardbibliothek,
-keine zusätzliche Abhängigkeit) intern auf Port `8099`, der von Home Assistant per Ingress durchgereicht
-wird. Ein zusätzlicher offener Port nach außen ist dafür nicht nötig.
+### Tab "Einstellungen" (neu in 1.3)
+Hier lässt sich die **komplette Konfiguration** bearbeiten, ohne YAML anzufassen:
+
+- Allgemeine Optionen (aktiv/inaktiv, Modus, Farbmodus, Log-Level)
+- Empfindlichkeit, Beat-Schwelle, Timing, Helligkeit, Basis-Farbton
+- RTMP-App/-Stream
+- **Lampen-Auswahl**: durchsuchbare Checkbox-Liste aller `light.*`-Entitäten (Anzeigename + Entity-ID), statt Text tippen
+- **Bereichs-Auswahl**: ebenfalls als Checkbox-Liste
+- **Raum-Profile**: Profile per Klick anlegen/entfernen, inkl. eigener Bass-/Mitten-/Höhen-/Fallback-Lampenauswahl und optionalen Overrides pro Profil
+
+Über **"Speichern & neu starten"** werden die Optionen via Supervisor-API geschrieben (identisch mit dem
+YAML-Tab "Konfiguration" im Supervisor – beide bleiben synchron) und das Add-on automatisch neu gestartet,
+damit die Änderungen sofort greifen. Der klassische YAML-Konfigurationstab im Supervisor funktioniert
+weiterhin parallel und zeigt denselben Stand.
+
+Technisch läuft dafür ein kleiner in `webui.py` eingebetteter Webserver (nur Python-Standardbibliothek für
+den HTTP-Teil) intern auf Port `8099`, der von Home Assistant per Ingress durchgereicht wird. Für das
+Schreiben der Optionen und den Neustart braucht das Add-on `hassio_api: true` + `hassio_role: manager`
+(bereits in `config.yaml` gesetzt); für das Auflisten der Lampen/Bereiche wird die bestehende
+`homeassistant_api: true`-Berechtigung genutzt.
 
 ## Voraussetzungen
 
