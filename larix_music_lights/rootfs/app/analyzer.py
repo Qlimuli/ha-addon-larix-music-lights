@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Larix Music Reactive Lights v1.6.4 – strobe mode"""
+"""Larix Music Reactive Lights v1.6.5 – true white + adaptive rate"""
 import os, sys, json, time, logging, subprocess, threading, signal, colorsys, hashlib
 from collections import deque
-from typing import Dict, List
+from typing import Dict, List, Optional
 import numpy as np
 import requests
 
@@ -55,6 +55,89 @@ log.info("Config: lights=%s bass=%s mid=%s high=%s interval=%dms mode=%s",
          LIGHTS, BASS_L, MID_L, HIGH_L, UPDATE_MS, MODE)
 state = None
 
+
+class AdaptiveRate:
+    """Slow down when mesh/HA struggles; speed up when responsive."""
+    def __init__(self, base_ms: int):
+        self.base = max(120, int(base_ms))
+        self.iv = float(self.base)
+        self.health = 1.0  # 1 = gut, ~0.2 = schlecht
+        self.drops = 0
+        self.fails = 0
+        self.oks = 0
+        self.lag_hits = 0
+        self._last_log = 0.0
+        self._lock = threading.Lock()
+
+    def set_base(self, base_ms: int):
+        with self._lock:
+            self.base = max(120, int(base_ms))
+            self._recalc()
+
+    def on_drop(self):
+        with self._lock:
+            self.drops += 1
+            self.health = max(0.18, self.health - 0.10)
+            self._recalc()
+
+    def on_fail(self):
+        with self._lock:
+            self.fails += 1
+            self.health = max(0.18, self.health - 0.12)
+            self._recalc()
+
+    def on_ok(self, latency_s: float = 0.0):
+        with self._lock:
+            self.oks += 1
+            if latency_s > 0.9:
+                self.health = max(0.2, self.health - 0.06)
+            elif latency_s > 0.5:
+                self.health = max(0.25, self.health - 0.02)
+            else:
+                self.health = min(1.0, self.health + 0.025)
+            self._recalc()
+
+    def on_lag(self, bad: bool):
+        with self._lock:
+            if bad:
+                self.lag_hits += 1
+                self.health = max(0.18, self.health - 0.08)
+            else:
+                self.health = min(1.0, self.health + 0.03)
+            self._recalc()
+
+    def _recalc(self):
+        # health 1.0 → base; health 0.2 → ~3.2× base (capped 500ms)
+        factor = 1.0 + (1.0 - self.health) * 2.8
+        self.iv = min(500.0, max(float(self.base), self.base * factor))
+
+    def interval_ms(self) -> int:
+        with self._lock:
+            return int(self.iv)
+
+    def interval_s(self) -> float:
+        return self.interval_ms() / 1000.0
+
+    def scale_min_iv(self, min_iv: float) -> float:
+        """Stretch per-entity min interval when health is low."""
+        with self._lock:
+            return min_iv * (1.0 + (1.0 - self.health) * 1.8)
+
+    def maybe_log(self):
+        now = time.time()
+        if now - self._last_log < 8:
+            return
+        self._last_log = now
+        with self._lock:
+            log.info(
+                "adaptive health=%.2f iv=%dms drops=%d fails=%d lag=%d (base=%d)",
+                self.health, int(self.iv), self.drops, self.fails, self.lag_hits, self.base,
+            )
+
+
+ADAPT = AdaptiveRate(UPDATE_MS)
+
+
 class HA:
     def __init__(self):
         self.s = requests.Session()
@@ -62,20 +145,28 @@ class HA:
         self._lock = threading.Lock()
         self._n = 0
         self._max = 4
+        self._caps: Dict[str, set] = {}  # entity_id -> supported_color_modes
+        self._cmd_bri: Dict[str, int] = {}
+        self._cmd_t: Dict[str, float] = {}
+        self._last_probe = 0.0
 
     def _req(self, method, path, **kw):
+        t0 = time.time()
         try:
             r = self.s.request(method, f"{HA_URL}{path}", timeout=1.2, **kw)
             r.raise_for_status()
+            ADAPT.on_ok(time.time() - t0)
             return r.json() if r.content else True
         except Exception as e:
+            ADAPT.on_fail()
             log.debug("HA %s %s: %s", method, path, e)
             return None
 
     def fire(self, method, path, **kw):
         with self._lock:
             if self._n >= self._max:
-                return
+                ADAPT.on_drop()
+                return False
             self._n += 1
         def w():
             try:
@@ -84,34 +175,120 @@ class HA:
                 with self._lock:
                     self._n = max(0, self._n - 1)
         threading.Thread(target=w, daemon=True).start()
+        return True
 
-    def set_lights(self, eids, bri, hs=None, trans=0.05):
+    def _get_caps(self, eid: str) -> set:
+        if eid in self._caps:
+            return self._caps[eid]
+        st = self._req("GET", f"/states/{eid}")
+        modes = set()
+        if isinstance(st, dict):
+            attrs = st.get("attributes") or {}
+            raw = attrs.get("supported_color_modes") or []
+            modes = {str(m).lower() for m in raw}
+        self._caps[eid] = modes
+        log.info("light caps %s: %s", eid, sorted(modes) if modes else "(none)")
+        return modes
+
+    def set_lights(self, eids, bri, hs=None, trans=0.05, white=False):
         if not eids:
             return
         bri = max(1, min(255, int(bri)))
-        p = {"entity_id": list(eids), "brightness": bri, "transition": max(0.0, float(trans))}
-        if hs is not None:
-            try:
-                h = (float(hs[0]) % 360) / 360.0
-                s = max(0.0, min(1.0, float(hs[1]) / 100.0))
-                r, g, b = colorsys.hsv_to_rgb(h, s, 1.0)
-                def lin(c):
-                    return ((c + 0.055) / 1.055) ** 2.4 if c > 0.04045 else c / 12.92
-                r2, g2, b2 = lin(r), lin(g), lin(b)
-                X = r2 * 0.4124 + g2 * 0.3576 + b2 * 0.1805
-                Y = r2 * 0.2126 + g2 * 0.7152 + b2 * 0.0722
-                Z = r2 * 0.0193 + g2 * 0.1192 + b2 * 0.9505
-                t = X + Y + Z
-                if t > 1e-6:
-                    p["xy_color"] = [round(X / t, 4), round(Y / t, 4)]
-            except Exception:
-                p["hs_color"] = [float(hs[0]) % 360, float(hs[1])]
-        self.fire("POST", "/services/light/turn_on", json=p)
+        now = time.time()
+        for e in eids:
+            self._cmd_bri[e] = bri
+            self._cmd_t[e] = now
+
+        # Group by capability so RGBW get W-channel, others color_temp / xy
+        by_mode = {}
+        for e in eids:
+            caps = self._get_caps(e)
+            use_white = white or (hs is not None and float(hs[1]) < 5)
+            if use_white:
+                if "rgbw" in caps or "rgbww" in caps:
+                    key = "rgbw"
+                elif "white" in caps:
+                    key = "white"
+                elif "color_temp" in caps:
+                    key = "ct"
+                else:
+                    key = "bri_only"
+            elif hs is not None:
+                if "xy" in caps or "hs" in caps or "rgb" in caps or "rgbw" in caps:
+                    key = "color"
+                elif "color_temp" in caps:
+                    key = "ct"
+                else:
+                    key = "bri_only"
+            else:
+                key = "bri_only"
+            by_mode.setdefault(key, []).append(e)
+
+        for key, group in by_mode.items():
+            p = {
+                "entity_id": list(group),
+                "brightness": bri,
+                "transition": max(0.0, float(trans)),
+            }
+            if key == "rgbw":
+                # Echtes Weiß über W-Kanal (RGB aus)
+                p["rgbw_color"] = [0, 0, 0, bri]
+            elif key == "white":
+                p["white"] = bri
+            elif key == "ct":
+                # neutrales Weiß ~4500K
+                p["color_temp_kelvin"] = 4500
+            elif key == "color" and hs is not None:
+                try:
+                    h = (float(hs[0]) % 360) / 360.0
+                    s = max(0.0, min(1.0, float(hs[1]) / 100.0))
+                    r, g, b = colorsys.hsv_to_rgb(h, s, 1.0)
+                    def lin(c):
+                        return ((c + 0.055) / 1.055) ** 2.4 if c > 0.04045 else c / 12.92
+                    r2, g2, b2 = lin(r), lin(g), lin(b)
+                    X = r2 * 0.4124 + g2 * 0.3576 + b2 * 0.1805
+                    Y = r2 * 0.2126 + g2 * 0.7152 + b2 * 0.0722
+                    Z = r2 * 0.0193 + g2 * 0.1192 + b2 * 0.9505
+                    t = X + Y + Z
+                    if t > 1e-6:
+                        p["xy_color"] = [round(X / t, 4), round(Y / t, 4)]
+                except Exception:
+                    p["hs_color"] = [float(hs[0]) % 360, float(hs[1])]
+            self.fire("POST", "/services/light/turn_on", json=p)
+
+    def probe_responsiveness(self, eids: List[str]):
+        """Compare commanded brightness to actual state – lag ⇒ slow down."""
+        now = time.time()
+        if now - self._last_probe < 2.5:
+            return
+        self._last_probe = now
+        if not eids:
+            return
+        bad = 0
+        checked = 0
+        for e in eids[:6]:
+            cmd = self._cmd_bri.get(e)
+            t = self._cmd_t.get(e, 0)
+            if cmd is None or now - t < 0.4 or now - t > 4.0:
+                continue
+            st = self._req("GET", f"/states/{e}")
+            if not isinstance(st, dict):
+                continue
+            checked += 1
+            attrs = st.get("attributes") or {}
+            actual = attrs.get("brightness")
+            if actual is None:
+                continue
+            if abs(int(actual) - int(cmd)) > 45:
+                bad += 1
+        if checked:
+            ADAPT.on_lag(bad >= max(1, checked // 2))
 
     def off(self, eids, trans=1.5):
         if eids:
             self.fire("POST", "/services/light/turn_off",
                       json={"entity_id": list(eids), "transition": trans})
+
 
 class Analyzer:
     def __init__(self, bt):
@@ -183,6 +360,7 @@ class Analyzer:
 
     def ok(self, eid, bri, hue, sat, min_iv, force=False):
         now = time.time()
+        min_iv = ADAPT.scale_min_iv(min_iv)
         prev = self._last.get(eid)
         if force:
             self._last[eid] = (bri, hue, sat, now)
@@ -193,10 +371,15 @@ class Analyzer:
         pb, ph, ps, pt = prev
         if (now - pt) < min_iv:
             return False
-        if abs(bri - pb) < 18 and abs(hue - ph) < 18 and abs(sat - ps) < 12:
+        # Stricter delta when mesh is stressed
+        db = 18 + int((1.0 - ADAPT.health) * 25)
+        dh = 18 + int((1.0 - ADAPT.health) * 20)
+        ds = 12 + int((1.0 - ADAPT.health) * 15)
+        if abs(bri - pb) < db and abs(hue - ph) < dh and abs(sat - ps) < ds:
             return False
         self._last[eid] = (bri, hue, sat, now)
         return True
+
 
 def map_lights(ha, az, f, bands, mode, min_b, max_b, trans, iv):
     amp, bass, mid, high, beat = f["amplitude"], f["bass"], f["mid"], f["high"], f["beat"]
@@ -209,6 +392,9 @@ def map_lights(ha, az, f, bands, mode, min_b, max_b, trans, iv):
     targets = bands["full"] or bands["bass"] or bands["mid"] or bands["high"]
     if not targets and not (bands["bass"] or bands["mid"] or bands["high"]):
         return
+
+    # Effective interval from adaptive controller
+    iv = max(iv, ADAPT.interval_s())
 
     if mode == "auto":
         now = time.time()
@@ -265,25 +451,26 @@ def map_lights(ha, az, f, bands, mode, min_b, max_b, trans, iv):
                 up = az._casc_order[:az._casc_n]
                 down = az._casc_order[az._casc_n:]
                 if beat > 0.5:
-                    up_hue, up_sat, up_bri = 0, 0, max_b
+                    for e in up:
+                        if az.ok(e, max_b, 0, 0, 0.15, force=True):
+                            ha.set_lights([e], max_b, white=True, trans=0.0)
                 else:
-                    up_hue, up_sat, up_bri = base_hue, min(90, base_sat + 20), max_b
-                for e in up:
-                    if az.ok(e, up_bri, up_hue, up_sat, 0.15, force=beat > 0.5):
-                        ha.set_lights([e], up_bri, hs=(up_hue, up_sat), trans=0.04)
+                    for e in up:
+                        if az.ok(e, max_b, base_hue, min(90, base_sat + 20), 0.15):
+                            ha.set_lights([e], max_b, hs=(base_hue, min(90, base_sat + 20)), trans=0.04)
                 dim = bright(0.15 + 0.2 * energy)
                 for e in down:
                     if az.ok(e, dim, base_hue, max(25, base_sat - 15), max(0.35, iv * 1.5)):
                         ha.set_lights([e], dim, hs=(base_hue, max(25, base_sat - 15)), trans=0.12)
-                az._hold_bri = up_bri
-                az._hold_hue = up_hue
-                az._hold_sat = up_sat
+                az._hold_bri = max_b
+                az._hold_hue = 0 if beat > 0.5 else base_hue
+                az._hold_sat = 0 if beat > 0.5 else min(90, base_sat + 20)
                 return
 
         if beat > 0.5:
             for e in targets:
                 if az.ok(e, max_b, 0, 0, 0.0, force=True):
-                    ha.set_lights([e], max_b, hs=(0, 0), trans=0.0)
+                    ha.set_lights([e], max_b, white=True, trans=0.0)
             az._post_beat_until = now + 0.28
             az._hold_bri = max_b
             az._hold_hue = base_hue
@@ -311,8 +498,12 @@ def map_lights(ha, az, f, bands, mode, min_b, max_b, trans, iv):
             bri = max_b if energy > 0.8 else bright(0.9)
             min_iv = max(0.18, iv * 0.9)
             for e in targets:
-                if az.ok(e, bri, hue, sat, min_iv, force=False):
-                    ha.set_lights([e], bri, hs=(hue, sat), trans=0.08)
+                if sat < 12:
+                    if az.ok(e, bri, 0, 0, min_iv):
+                        ha.set_lights([e], bri, white=True, trans=0.08)
+                else:
+                    if az.ok(e, bri, hue, sat, min_iv):
+                        ha.set_lights([e], bri, hs=(hue, sat), trans=0.08)
             az._hold_bri = bri
             az._hold_hue = hue
             az._hold_sat = sat
@@ -329,7 +520,7 @@ def map_lights(ha, az, f, bands, mode, min_b, max_b, trans, iv):
         az._hold_sat = 0.65 * az._hold_sat + 0.35 * base_sat
         min_iv = max(0.28, iv * 1.2)
         for e in targets:
-            if az.ok(e, az._hold_bri, az._hold_hue, az._hold_sat, min_iv, force=False):
+            if az.ok(e, az._hold_bri, az._hold_hue, az._hold_sat, min_iv):
                 ha.set_lights([e], az._hold_bri, hs=(az._hold_hue, az._hold_sat), trans=0.1)
         return
 
@@ -337,16 +528,15 @@ def map_lights(ha, az, f, bands, mode, min_b, max_b, trans, iv):
         if beat > 0.5:
             for e in targets:
                 if az.ok(e, max_b, 0, 0, 0.0, force=True):
-                    ha.set_lights([e], max_b, hs=(0, 0), trans=0.0)
+                    ha.set_lights([e], max_b, white=True, trans=0.0)
         else:
             b = bright(0.25 + 0.2 * amp)
             for e in targets:
                 if az.ok(e, b, 0, 0, max(0.5, iv * 1.5)):
-                    ha.set_lights([e], b, hs=(0, 0), trans=0.1)
+                    ha.set_lights([e], b, white=True, trans=0.1)
         return
 
     if mode == "strobe":
-        # White only: flash on beat, hold bright while loud is sustained
         now = time.time()
         energy = min(1.0, amp * 0.55 + bass * 0.45)
         loud = energy >= 0.65 or amp >= 0.75
@@ -360,45 +550,45 @@ def map_lights(ha, az, f, bands, mode, min_b, max_b, trans, iv):
         if beat > 0.5:
             for e in targets:
                 if az.ok(e, max_b, 0, 0, 0.0, force=True):
-                    ha.set_lights([e], max_b, hs=(0, 0), trans=0.0)
+                    ha.set_lights([e], max_b, white=True, trans=0.0)
             az._post_beat_until = now + 0.10
             az._hold_bri = max_b
             return
 
-        # Brief dip after flash for strobe contrast
         if az._post_beat_until <= now < az._post_beat_until + 0.09:
             dip = max(1, int(min_b * 0.4))
             for e in targets:
                 if az.ok(e, dip, 0, 0, 0.0, force=True):
-                    ha.set_lights([e], dip, hs=(0, 0), trans=0.0)
+                    ha.set_lights([e], dip, white=True, trans=0.0)
             return
 
         if now < az._post_beat_until:
             return
 
-        # Sustained loud: hold high white brightness (beats still flash above)
         if sustain_s >= 0.3:
             bri = max_b if energy > 0.75 else bright(0.8 + 0.2 * energy)
             for e in targets:
                 if az.ok(e, bri, 0, 0, max(0.22, iv)):
-                    ha.set_lights([e], bri, hs=(0, 0), trans=0.04)
+                    ha.set_lights([e], bri, white=True, trans=0.04)
             az._hold_bri = bri
             return
 
         b = bright(0.15 + 0.5 * energy)
         for e in targets:
             if az.ok(e, b, 0, 0, max(0.28, iv)):
-                ha.set_lights([e], b, hs=(0, 0), trans=0.06)
+                ha.set_lights([e], b, white=True, trans=0.06)
         return
 
     if mode == "spectrum" or (bands["bass"] or bands["mid"] or bands["high"]):
         min_iv = max(0.35, iv)
         if bands["bass"] and (beat > 0.5 or bass > 0.7):
             for e in bands["bass"]:
-                if az.ok(e, bright(bass), 5, 80, min_iv, force=beat > 0.5):
-                    ha.set_lights([e], bright(bass) if beat < 0.5 else max_b,
-                                  hs=(0 if beat > 0.5 else 5, 0 if beat > 0.5 else 80),
-                                  trans=0.0 if beat > 0.5 else 0.1)
+                if beat > 0.5:
+                    if az.ok(e, max_b, 0, 0, min_iv, force=True):
+                        ha.set_lights([e], max_b, white=True, trans=0.0)
+                else:
+                    if az.ok(e, bright(bass), 5, 80, min_iv):
+                        ha.set_lights([e], bright(bass), hs=(5, 80), trans=0.1)
         if bands["mid"]:
             for e in bands["mid"]:
                 if az.ok(e, bright(mid), 130, 70, min_iv):
@@ -429,7 +619,8 @@ def map_lights(ha, az, f, bands, mode, min_b, max_b, trans, iv):
 
     for e in targets:
         if az.ok(e, bright(max(0.3, amp)), 0, 0, max(0.4, iv)):
-            ha.set_lights([e], bright(max(0.3, amp)), hs=(0, 0), trans=0.1)
+            ha.set_lights([e], bright(max(0.3, amp)), white=True, trans=0.1)
+
 
 def start_ff():
     url = f"rtmp://0.0.0.0:1935/{RTMP_APP}/{RTMP_STREAM}"
@@ -437,6 +628,7 @@ def start_ff():
            "-vn", "-ac", str(CH), "-ar", str(SR), "-f", "s16le", "-acodec", "pcm_s16le", "pipe:1"]
     log.info("FFmpeg: %s", url)
     return subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
+
 
 def read_err(proc):
     if not proc.stderr:
@@ -449,6 +641,7 @@ def read_err(proc):
             continue
         (log.warning if any(k in t.lower() for k in ("error", "fail", "invalid")) else log.info)("ffmpeg: %s", t)
 
+
 class Null:
     def set(self, **k): pass
     def log_event(self, *a, **k): pass
@@ -460,6 +653,7 @@ class Null:
     def mark_light_update(self, *a, **k): pass
     def mark_ffmpeg_restart(self, *a, **k): pass
     def set_features(self, *a, **k): pass
+
 
 def reload_cfg():
     global MODE, SENS, UPDATE_MS, TRANS, MIN_B, MAX_B, BEAT_T, LIGHTS, BASS_L, MID_L, HIGH_L, ENABLED
@@ -476,9 +670,12 @@ def reload_cfg():
     BASS_L[:] = [str(x) for x in (o.get("bass_lights") or [])]
     MID_L[:] = [str(x) for x in (o.get("mid_lights") or [])]
     HIGH_L[:] = [str(x) for x in (o.get("high_lights") or [])]
+    ADAPT.set_base(UPDATE_MS)
     bands = dict(bass=list(BASS_L), mid=list(MID_L), high=list(HIGH_L), full=list(LIGHTS))
-    log.info("Soft-reload mode=%s lights=%s bands=%s/%s/%s iv=%d", MODE, LIGHTS, BASS_L, MID_L, HIGH_L, UPDATE_MS)
+    log.info("Soft-reload mode=%s lights=%s bands=%s/%s/%s iv=%d",
+             MODE, LIGHTS, BASS_L, MID_L, HIGH_L, UPDATE_MS)
     return bands
+
 
 def main():
     global state
@@ -499,6 +696,7 @@ def main():
     bands = dict(bass=list(BASS_L), mid=list(MID_L), high=list(HIGH_L), full=list(LIGHTS))
     all_e = list(set(bands["bass"] + bands["mid"] + bands["high"] + bands["full"]))
     state.set(mode=MODE, sensitivity=SENS, bands=bands, connection_state="waiting")
+    ADAPT.set_base(UPDATE_MS)
 
     def sd(s, f):
         az.running = False
@@ -548,6 +746,7 @@ def main():
                                 az._hold_bri = None
                                 az._casc_active = False
                                 az._casc_n = 0
+                                ha._caps.clear()
                             all_e = list(set(bands["bass"] + bands["mid"] + bands["high"] + bands["full"]))
                             state.set(mode=MODE, sensitivity=SENS, bands=bands)
                             state.log_event("Config live (kein Neustart)", "info")
@@ -572,8 +771,11 @@ def main():
                     feat = az.process(frame, SENS)
                     state.set_features(feat)
                     now = time.time()
-                    if (now - last_up) * 1000 >= UPDATE_MS:
-                        map_lights(ha, az, feat, bands, MODE, MIN_B, MAX_B, TRANS, UPDATE_MS / 1000.0)
+                    eff_ms = ADAPT.interval_ms()
+                    if (now - last_up) * 1000 >= eff_ms:
+                        map_lights(ha, az, feat, bands, MODE, MIN_B, MAX_B, TRANS, eff_ms / 1000.0)
+                        ha.probe_responsiveness(all_e)
+                        ADAPT.maybe_log()
                         state.mark_light_update()
                         sec = int(now)
                         if sec != last_log and sec % 2 == 0:
@@ -581,9 +783,11 @@ def main():
                                 peak = int(np.max(np.abs(np.frombuffer(frame, dtype=np.int16))))
                             except Exception:
                                 peak = 0
-                            log.info("audio amp=%.3f bass=%.3f mid=%.3f high=%.3f beat=%.0f peak=%d mode=%s",
-                                     feat["amplitude"], feat["bass"], feat["mid"], feat["high"],
-                                     feat["beat"], peak, MODE)
+                            log.info(
+                                "audio amp=%.3f bass=%.3f mid=%.3f high=%.3f beat=%.0f peak=%d mode=%s iv=%d",
+                                feat["amplitude"], feat["bass"], feat["mid"], feat["high"],
+                                feat["beat"], peak, MODE, eff_ms,
+                            )
                             last_log = sec
                         last_up = now
         except Exception as e:
@@ -600,6 +804,7 @@ def main():
             log.warning("FFmpeg exited – restart 3s")
             state.mark_ffmpeg_restart()
             time.sleep(3)
+
 
 if __name__ == "__main__":
     main()
