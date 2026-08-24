@@ -1,6 +1,6 @@
 name: "Larix Music Reactive Lights"
-description: "Receive audio stream from Larix Broadcaster and make lights react to music (cascade multi-lamp)"
-version: "1.6.3"
+description: "Receive audio stream from Larix Broadcaster and make lights react to music (strobe mode)"
+version: "1.6.4"
 slug: larix_music_lights
 url: "https://github.com/Qlimuli/ha-addon-larix-music-lights"
 arch:
@@ -51,7 +51,7 @@ options:
 schema:
   enabled: bool
   active_profile: str
-  mode: list(auto|pulse|spectrum|color_cycle|brightness|cinema)
+  mode: list(auto|pulse|strobe|spectrum|color_cycle|brightness|cinema)
   sensitivity: float(0.1,2.0)
   update_interval_ms: int(120,500)
   transition: float(0.0,2.0)
