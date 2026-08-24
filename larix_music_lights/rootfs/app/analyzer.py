@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Larix Music Reactive Lights v1.6.3 – multi-lamp cascade"""
+"""Larix Music Reactive Lights v1.6.4 – strobe mode"""
 import os, sys, json, time, logging, subprocess, threading, signal, colorsys, hashlib
 from collections import deque
 from typing import Dict, List
@@ -343,6 +343,52 @@ def map_lights(ha, az, f, bands, mode, min_b, max_b, trans, iv):
             for e in targets:
                 if az.ok(e, b, 0, 0, max(0.5, iv * 1.5)):
                     ha.set_lights([e], b, hs=(0, 0), trans=0.1)
+        return
+
+    if mode == "strobe":
+        # White only: flash on beat, hold bright while loud is sustained
+        now = time.time()
+        energy = min(1.0, amp * 0.55 + bass * 0.45)
+        loud = energy >= 0.65 or amp >= 0.75
+        if loud:
+            if az._sustain_t0 <= 0:
+                az._sustain_t0 = now
+        else:
+            az._sustain_t0 = 0.0
+        sustain_s = (now - az._sustain_t0) if az._sustain_t0 > 0 else 0.0
+
+        if beat > 0.5:
+            for e in targets:
+                if az.ok(e, max_b, 0, 0, 0.0, force=True):
+                    ha.set_lights([e], max_b, hs=(0, 0), trans=0.0)
+            az._post_beat_until = now + 0.10
+            az._hold_bri = max_b
+            return
+
+        # Brief dip after flash for strobe contrast
+        if az._post_beat_until <= now < az._post_beat_until + 0.09:
+            dip = max(1, int(min_b * 0.4))
+            for e in targets:
+                if az.ok(e, dip, 0, 0, 0.0, force=True):
+                    ha.set_lights([e], dip, hs=(0, 0), trans=0.0)
+            return
+
+        if now < az._post_beat_until:
+            return
+
+        # Sustained loud: hold high white brightness (beats still flash above)
+        if sustain_s >= 0.3:
+            bri = max_b if energy > 0.75 else bright(0.8 + 0.2 * energy)
+            for e in targets:
+                if az.ok(e, bri, 0, 0, max(0.22, iv)):
+                    ha.set_lights([e], bri, hs=(0, 0), trans=0.04)
+            az._hold_bri = bri
+            return
+
+        b = bright(0.15 + 0.5 * energy)
+        for e in targets:
+            if az.ok(e, b, 0, 0, max(0.28, iv)):
+                ha.set_lights([e], b, hs=(0, 0), trans=0.06)
         return
 
     if mode == "spectrum" or (bands["bass"] or bands["mid"] or bands["high"]):
