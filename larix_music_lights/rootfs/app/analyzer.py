@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Larix Music Reactive Lights v1.6.5 – true white + adaptive rate"""
+"""Larix Music Reactive Lights v1.6.6 – better beats + tuned defaults"""
 import os, sys, json, time, logging, subprocess, threading, signal, colorsys, hashlib
 from collections import deque
 from typing import Dict, List, Optional
@@ -29,12 +29,12 @@ def _opt():
 O = _opt()
 ENABLED = bool(O.get("enabled", True))
 MODE = str(O.get("mode") or "auto")
-SENS = float(O.get("sensitivity", 1.2))
-UPDATE_MS = max(int(O.get("update_interval_ms", 180)), 120)
+SENS = float(O.get("sensitivity", 1.4))
+UPDATE_MS = max(int(O.get("update_interval_ms", 500)), 120)
 TRANS = float(O.get("transition", 0.05))
 MIN_B = int(O.get("min_brightness", 25))
 MAX_B = int(O.get("max_brightness", 255))
-BEAT_T = float(O.get("beat_threshold", 0.4))
+BEAT_T = float(O.get("beat_threshold", 0.45))
 RTMP_APP = str(O.get("rtmp_app") or "live")
 RTMP_STREAM = str(O.get("rtmp_stream") or "music")
 LOG_LEVEL = str(O.get("log_level") or "info").upper()
@@ -61,7 +61,7 @@ class AdaptiveRate:
     def __init__(self, base_ms: int):
         self.base = max(120, int(base_ms))
         self.iv = float(self.base)
-        self.health = 1.0  # 1 = gut, ~0.2 = schlecht
+        self.health = 1.0
         self.drops = 0
         self.fails = 0
         self.oks = 0
@@ -77,38 +77,41 @@ class AdaptiveRate:
     def on_drop(self):
         with self._lock:
             self.drops += 1
-            self.health = max(0.18, self.health - 0.10)
+            # Already at slow ceiling → soft penalty (expected with many Zigbee lights)
+            if self.iv >= min(500.0, self.base * 1.05):
+                self.health = max(0.40, self.health - 0.02)
+            else:
+                self.health = max(0.18, self.health - 0.08)
             self._recalc()
 
     def on_fail(self):
         with self._lock:
             self.fails += 1
-            self.health = max(0.18, self.health - 0.12)
+            self.health = max(0.18, self.health - 0.10)
             self._recalc()
 
     def on_ok(self, latency_s: float = 0.0):
         with self._lock:
             self.oks += 1
             if latency_s > 0.9:
-                self.health = max(0.2, self.health - 0.06)
+                self.health = max(0.25, self.health - 0.05)
             elif latency_s > 0.5:
-                self.health = max(0.25, self.health - 0.02)
+                self.health = max(0.30, self.health - 0.015)
             else:
-                self.health = min(1.0, self.health + 0.025)
+                self.health = min(1.0, self.health + 0.03)
             self._recalc()
 
     def on_lag(self, bad: bool):
         with self._lock:
             if bad:
                 self.lag_hits += 1
-                self.health = max(0.18, self.health - 0.08)
+                self.health = max(0.20, self.health - 0.06)
             else:
-                self.health = min(1.0, self.health + 0.03)
+                self.health = min(1.0, self.health + 0.04)
             self._recalc()
 
     def _recalc(self):
-        # health 1.0 → base; health 0.2 → ~3.2× base (capped 500ms)
-        factor = 1.0 + (1.0 - self.health) * 2.8
+        factor = 1.0 + (1.0 - self.health) * 2.5
         self.iv = min(500.0, max(float(self.base), self.base * factor))
 
     def interval_ms(self) -> int:
@@ -119,13 +122,12 @@ class AdaptiveRate:
         return self.interval_ms() / 1000.0
 
     def scale_min_iv(self, min_iv: float) -> float:
-        """Stretch per-entity min interval when health is low."""
         with self._lock:
-            return min_iv * (1.0 + (1.0 - self.health) * 1.8)
+            return min_iv * (1.0 + (1.0 - self.health) * 1.5)
 
     def maybe_log(self):
         now = time.time()
-        if now - self._last_log < 8:
+        if now - self._last_log < 10:
             return
         self._last_log = now
         with self._lock:
@@ -144,8 +146,8 @@ class HA:
         self.s.headers.update({"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"})
         self._lock = threading.Lock()
         self._n = 0
-        self._max = 4
-        self._caps: Dict[str, set] = {}  # entity_id -> supported_color_modes
+        self._max = 6
+        self._caps: Dict[str, set] = {}
         self._cmd_bri: Dict[str, int] = {}
         self._cmd_t: Dict[str, float] = {}
         self._last_probe = 0.0
@@ -199,7 +201,6 @@ class HA:
             self._cmd_bri[e] = bri
             self._cmd_t[e] = now
 
-        # Group by capability so RGBW get W-channel, others color_temp / xy
         by_mode = {}
         for e in eids:
             caps = self._get_caps(e)
@@ -231,12 +232,10 @@ class HA:
                 "transition": max(0.0, float(trans)),
             }
             if key == "rgbw":
-                # Echtes Weiß über W-Kanal (RGB aus)
                 p["rgbw_color"] = [0, 0, 0, bri]
             elif key == "white":
                 p["white"] = bri
             elif key == "ct":
-                # neutrales Weiß ~4500K
                 p["color_temp_kelvin"] = 4500
             elif key == "color" and hs is not None:
                 try:
@@ -257,9 +256,8 @@ class HA:
             self.fire("POST", "/services/light/turn_on", json=p)
 
     def probe_responsiveness(self, eids: List[str]):
-        """Compare commanded brightness to actual state – lag ⇒ slow down."""
         now = time.time()
-        if now - self._last_probe < 2.5:
+        if now - self._last_probe < 3.0:
             return
         self._last_probe = now
         if not eids:
@@ -269,7 +267,7 @@ class HA:
         for e in eids[:6]:
             cmd = self._cmd_bri.get(e)
             t = self._cmd_t.get(e, 0)
-            if cmd is None or now - t < 0.4 or now - t > 4.0:
+            if cmd is None or now - t < 0.5 or now - t > 5.0:
                 continue
             st = self._req("GET", f"/states/{e}")
             if not isinstance(st, dict):
@@ -279,7 +277,7 @@ class HA:
             actual = attrs.get("brightness")
             if actual is None:
                 continue
-            if abs(int(actual) - int(cmd)) > 45:
+            if abs(int(actual) - int(cmd)) > 50:
                 bad += 1
         if checked:
             ADAPT.on_lag(bad >= max(1, checked // 2))
@@ -295,6 +293,9 @@ class Analyzer:
         self.bh = deque(maxlen=48)
         self.eh = deque(maxlen=48)
         self.ph = deque(maxlen=120)
+        self.flux_h = deque(maxlen=40)
+        self.prev_bass = 0.0
+        self.prev_amp = 0.0
         self.last_beat = 0.0
         self.hue = 0.0
         self.bt = bt
@@ -345,17 +346,49 @@ class Analyzer:
         high = min(1.0, (hr / (self._hm + 1e-12)) ** 0.75 * (0.85 + 0.25 * sens))
         self.bh.append(bass)
         self.eh.append(amp)
+
+        # Spectral flux: positive change catches kicks even when level stays high
+        bass_flux = max(0.0, bass - self.prev_bass)
+        amp_flux = max(0.0, amp - self.prev_amp)
+        self.prev_bass = bass
+        self.prev_amp = amp
+        flux = bass_flux * 0.72 + amp_flux * 0.28
+        self.flux_h.append(flux)
+
         beat = 0.0
         now = time.time()
-        if len(self.eh) >= 8 and (now - self.last_beat) > 0.22:
+        # 180ms refractory ≈ up to ~330 BPM; typical 60–140 BPM fine
+        if len(self.eh) >= 6 and (now - self.last_beat) > 0.18:
             ea = sum(self.eh) / len(self.eh)
             ba = sum(self.bh) / len(self.bh)
-            onset = (amp > ea * (1.25 + self.bt * 0.4) and amp > 0.22) or \
-                    (bass > ba * 1.45 and bass > 0.60 and amp > 0.15) or \
-                    (peak > pref * 0.60 and amp > 0.35)
-            if onset:
+            fa = sum(self.flux_h) / max(1, len(self.flux_h))
+            th = float(self.bt)
+
+            recent = list(self.bh)
+            local_peak = False
+            if len(recent) >= 4:
+                local_peak = (
+                    bass >= max(recent[-4:]) * 0.90
+                    and bass_flux > 0.035
+                    and bass > 0.42
+                )
+
+            # Flux onset: sudden rise vs recent flux average
+            flux_onset = (
+                flux > max(0.055, fa * (1.30 + th * 0.55))
+                and (bass > 0.32 or amp > 0.25)
+            )
+            # Relative energy still useful for big drops
+            energy_onset = (
+                (amp > ea * (1.15 + th * 0.30) and amp > 0.18)
+                or (bass > ba * (1.22 + th * 0.22) and bass > 0.40 and amp > 0.10)
+            )
+            peak_onset = peak > pref * (0.45 + th * 0.12) and amp > 0.25 and bass_flux > 0.025
+
+            if flux_onset or energy_onset or local_peak or peak_onset:
                 beat = 1.0
                 self.last_beat = now
+
         return dict(amplitude=amp, bass=bass, mid=mid, high=high, beat=beat)
 
     def ok(self, eid, bri, hue, sat, min_iv, force=False):
@@ -371,7 +404,6 @@ class Analyzer:
         pb, ph, ps, pt = prev
         if (now - pt) < min_iv:
             return False
-        # Stricter delta when mesh is stressed
         db = 18 + int((1.0 - ADAPT.health) * 25)
         dh = 18 + int((1.0 - ADAPT.health) * 20)
         ds = 12 + int((1.0 - ADAPT.health) * 15)
@@ -393,7 +425,6 @@ def map_lights(ha, az, f, bands, mode, min_b, max_b, trans, iv):
     if not targets and not (bands["bass"] or bands["mid"] or bands["high"]):
         return
 
-    # Effective interval from adaptive controller
     iv = max(iv, ADAPT.interval_s())
 
     if mode == "auto":
