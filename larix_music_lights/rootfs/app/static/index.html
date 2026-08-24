@@ -85,6 +85,7 @@ details summary{cursor:pointer;color:var(--muted);font-size:12px;font-weight:600
       <label>Effekt-Modus</label>
       <div class="modes">
         <button type="button" class="mode-chip active" data-m="auto">✨ Auto (Takt)</button>
+        <button type="button" class="mode-chip" data-m="strobe">⚡ Strobe</button>
         <button type="button" class="mode-chip" data-m="pulse">Pulse</button>
         <button type="button" class="mode-chip" data-m="spectrum">Spectrum</button>
         <button type="button" class="mode-chip" data-m="color_cycle">Color Cycle</button>
@@ -100,7 +101,7 @@ details summary{cursor:pointer;color:var(--muted);font-size:12px;font-weight:600
       <div class="llist" id="lightList"></div>
       <div class="hint" id="lightCount" style="margin-top:6px"></div>
     </div>
-    <div class="card"><h2>Geschwindigkeit &amp; Empfindlichkeit</h2>
+    <div class="card"><h2>Geschwindigkeit & Empfindlichkeit</h2>
       <div class="slider-row"><div class="top-l"><span>Update-Intervall</span><b id="val_cfg_update_interval_ms">180 ms</b></div><input type="range" id="cfg_update_interval_ms" min="120" max="500" step="10" value="180"></div>
       <div class="hint">Niedriger = schneller (mehr Zigbee-Last). 150–220 ms empfohlen.</div>
       <div class="slider-row"><div class="top-l"><span>Sensitivity</span><b id="val_cfg_sensitivity">1.20x</b></div><input type="range" id="cfg_sensitivity" min="0.1" max="2" step="0.05" value="1.2"></div>
